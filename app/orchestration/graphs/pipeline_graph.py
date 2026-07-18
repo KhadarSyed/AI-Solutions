@@ -29,10 +29,21 @@ async def _session_config(session_id: str) -> dict:
         return (row.config or {}) if row else {}
 
 
+async def _progress(state: PipelineState, message: str) -> None:
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from app.channels.notifier import notify_progress
+
+        await notify_progress(state, message)
+
+
 async def collect(state: PipelineState) -> dict:
     from app.services import ingestion_service
 
     session_id = state["session_id"]
+    brand = state.get("brand", "the brand")
+    await _progress(state, f"🔍 Searching news sources for {brand} (last 48 hours)…")
     config = await _session_config(session_id)
     stats = await ingestion_service.collect(
         session_id=session_id,
@@ -52,6 +63,8 @@ async def enrich(state: PipelineState) -> dict:
 
     store = get_artifact_store()
     session_id = state["session_id"]
+    await _progress(state, f"🌐 Resolving publisher country/author for "
+                           f"{state.get('unique_count', 0)} articles…")
     payload = await store.get_json(keys.source_file(session_id))
     articles = [RawArticle(**a) for a in payload.get("articles", [])]
     stats = await enrich_articles(articles, state["project_id"])
@@ -106,6 +119,7 @@ async def gate1_consent(state: PipelineState) -> dict:
 async def tag(state: PipelineState) -> dict:
     from app.services.tagging_service import tag_session
 
+    await _progress(state, "🏷️ Tagging articles (sentiment, theme, section, entities)…")
     stats = await tag_session(session_id=state["session_id"], project_id=state["project_id"])
     return {
         "tagged_count": stats["tagged"],
@@ -138,6 +152,7 @@ async def dashboards(state: PipelineState) -> dict:
 
     from app.services.dashboard_service import build_dashboards
 
+    await _progress(state, "📊 Building the 5 dashboards and the branded report…")
     payload = await build_dashboards(session_id=state["session_id"], force=True)
 
     # Dashboard Agent: schema (memory/graph-biased charts, liked template) → dashboard.html

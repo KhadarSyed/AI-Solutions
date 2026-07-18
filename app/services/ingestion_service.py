@@ -114,13 +114,15 @@ async def collect(
     session_id: str,
     brand: str,
     query_groups: list[dict],
-    days_back: int = 7,
+    days_back: int | None = None,
     language: str = "en",
     country: str | None = None,
     max_per_query: int = 50,
     extra_articles: list[RawArticle] | None = None,
 ) -> dict:
     """Run the fleet and persist source_file. query_groups: [{name, queries:[...]}]."""
+    if days_back is None:
+        days_back = get_settings().collection_days_back   # default 48h
     filters = SearchFilters(
         days_back=days_back, language=language, country=country, max_results=max_per_query
     )

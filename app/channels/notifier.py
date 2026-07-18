@@ -72,6 +72,25 @@ async def notify_gate(state: PipelineState, *, gate: int, csv_key: str, message:
                    subject=f"Gate {gate} — action needed")
 
 
+async def notify_progress(state: PipelineState, message: str) -> None:
+    """Short 'what I'm doing now' status to the origin channel. Emitted to the
+    run stream always; delivered as a message to Teams (chat/channel) so the
+    requester sees live stage updates. Email origins get gates + completion only
+    (no inbox spam)."""
+    channel = state.get("origin_channel", "web")
+    run_id = state.get("run_id")
+    if run_id:
+        await get_event_bus().emit(run_id, "progress",
+                                   payload={"channel": channel, "message": message[:300]})
+    if channel in ("teams_chat", "teams_channel"):
+        adapter = _adapters.get(channel)
+        if adapter is not None:
+            import contextlib
+            with contextlib.suppress(Exception):
+                await adapter.send(state.get("origin_address", {}),
+                                   OutboundMessage(subject="Progress", text=message))
+
+
 async def notify_complete(state: PipelineState) -> None:
     """Deliver the finished analysis (branded report) to the origin channel."""
     channel = state.get("origin_channel", "web")
