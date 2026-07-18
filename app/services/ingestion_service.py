@@ -89,9 +89,14 @@ async def relevancy_filter(
 
     from app.llm_gateway.embeddings import embed, embed_one
 
-    anchor = await embed_one(f"{brand} — " + "; ".join(queries[:10]))
-    texts = [f"{a.title}. {a.content[:400]}" for a in articles]
-    vectors = await embed(texts)
+    try:
+        anchor = await embed_one(f"{brand} — " + "; ".join(queries[:10]))
+        texts = [f"{a.title}. {a.content[:400]}" for a in articles]
+        vectors = await embed(texts)
+    except Exception as exc:
+        # embeddings are optional here — a bad deployment/key must not fail collection
+        log.warning("ingestion.relevancy_skipped", error=str(exc)[:160])
+        return articles
 
     def cos(u: list[float], v: list[float]) -> float:
         dot = sum(x * y for x, y in zip(u, v, strict=True))

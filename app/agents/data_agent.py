@@ -152,8 +152,13 @@ async def _question_flow(
             pass
 
     if brain.Route.RAG in decision.routes:
-        articles = await retrieve(project_id=project_id, query=decision.search_query or message,
-                                  session_id=session_id, approved_only=True)
+        try:
+            articles = await retrieve(project_id=project_id,
+                                      query=decision.search_query or message,
+                                      session_id=session_id, approved_only=True)
+        except Exception as exc:
+            log.warning("data_agent.retrieval_failed", error=str(exc)[:160])
+            articles = []
         context_parts.append(to_context_block(articles))
         citations = [{"id": a.article_id, "score": round(a.rerank_score, 3),
                       "publisher": a.meta.get("publisher", "")} for a in articles]

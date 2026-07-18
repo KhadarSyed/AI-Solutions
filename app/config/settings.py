@@ -72,6 +72,8 @@ class Settings(BaseSettings):
 
     # Channels
     teams_mcp_url: str = ""
+    teams_token_path: str = "data/local/teams_token.json"
+    teams_auth_callback_port: int = 8765
     smtp_host: str = "localhost"
     smtp_port: int = 3025
     imap_host: str = "localhost"

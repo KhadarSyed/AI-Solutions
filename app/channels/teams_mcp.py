@@ -20,18 +20,51 @@ class TeamsMcpAdapter(ChannelAdapter):
     channel = "teams"
 
     def enabled(self) -> bool:
-        return bool(get_settings().teams_mcp_url)
+        # requires both the URL and a persisted durable token (run scripts/teams_auth.py)
+        if not get_settings().teams_mcp_url:
+            return False
+        from app.channels.teams_token_store import FileTokenStorage
 
-    async def _session(self):
+        return FileTokenStorage().has_credentials()
+
+    def _auth_provider(self):
+        from mcp.client.auth import OAuthClientProvider
+        from mcp.shared.auth import OAuthClientMetadata
+
+        from app.channels.teams_token_store import FileTokenStorage
+
+        s = get_settings()
+        port = s.teams_auth_callback_port
+
+        async def _no_interactive(_url: str) -> None:
+            raise RuntimeError(
+                "teams-mcp token missing/expired — run `uv run python scripts/teams_auth.py`"
+            )
+
+        async def _no_callback() -> tuple[str, str | None]:
+            raise RuntimeError("teams-mcp requires interactive re-auth")
+
+        return OAuthClientProvider(
+            server_url=s.teams_mcp_url,
+            client_metadata=OAuthClientMetadata(
+                client_name="PR Intelligence Agent",
+                redirect_uris=[f"http://localhost:{port}/callback"],
+                grant_types=["authorization_code", "refresh_token"],
+                response_types=["code"],
+                token_endpoint_auth_method="none",
+            ),
+            storage=FileTokenStorage(),
+            redirect_handler=_no_interactive,
+            callback_handler=_no_callback,
+        )
+
+    async def _call(self, tool: str, args: dict) -> dict:
         from mcp import ClientSession
         from mcp.client.streamable_http import streamablehttp_client
 
         url = get_settings().teams_mcp_url
-        return streamablehttp_client(url), ClientSession
-
-    async def _call(self, tool: str, args: dict) -> dict:
-        transport, ClientSession = await self._session()
-        async with transport as (read, write, *_), ClientSession(read, write) as session:
+        async with streamablehttp_client(url, auth=self._auth_provider()) as (read, write, *_), \
+                ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(tool, args)
             out = {}
