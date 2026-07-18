@@ -129,8 +129,8 @@ def test_renderer_escapes_untrusted_content():
     schema["logos"]["brand"]["name"] = '"><script>alert(4)</script>'
     schema["banner"]["video_url"] = "javascript:alert(5)"
     html = render(schema)
-    assert "<script>alert(1)" not in html
-    assert "onerror=alert(2)" not in html
+    assert "<script>alert(1)" not in html             # raw tag never survives
+    assert "<img src=x onerror" not in html           # summary bullet neutralized
     assert "<svg onload" not in html
     assert "javascript:alert(5)" not in html          # non-http scheme dropped
     assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
