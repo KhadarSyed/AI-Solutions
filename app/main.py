@@ -5,7 +5,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes.admin import router as admin_router
+from app.api.routes.projects import router as projects_router
+from app.api.routes.review import router as review_router
 from app.api.routes.runs import router as runs_router
+from app.api.routes.sessions import router as sessions_router
 from app.api.ws.query_builder import router as ws_qb_router
 from app.api.ws.runs_stream import router as ws_runs_router
 from app.observability.logging import get_logger, setup_logging
@@ -67,6 +70,9 @@ def create_app() -> FastAPI:
     app = FastAPI(title="PR Intelligence Agent", version="0.1.0", lifespan=lifespan)
     setup_tracing(app)
     app.include_router(admin_router)
+    app.include_router(projects_router)
+    app.include_router(sessions_router)
+    app.include_router(review_router)
     app.include_router(runs_router)
     app.include_router(ws_runs_router)
     app.include_router(ws_qb_router)

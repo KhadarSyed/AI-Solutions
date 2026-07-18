@@ -5,9 +5,10 @@ ENV PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers
 
-# docker CLI for sandbox `docker exec` (Phase C); curl for healthchecks
+# docker CLI for sandbox `docker exec` (Phase C); curl for healthchecks;
+# gcc/libpq-dev for psycopg2 source build (mem0 1.x graph deps)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates gnupg \
+    curl ca-certificates gnupg gcc python3-dev libpq-dev \
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && echo "deb [signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
