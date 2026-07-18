@@ -27,8 +27,16 @@ _CHANGES_RE = re.compile(r"\b(change|changes|revise|instead|add|remove|different
 
 
 class InboundIntent(BaseModel):
-    kind: str = Field(description="gate_decision | question | change_request | report_request")
+    kind: str = Field(
+        description="start_run | gate_decision | question | change_request | report_request"
+    )
     gate_decision: str = Field(default="", description="approved|changes when kind=gate_decision")
+    brand: str = Field(default="", description="brand to monitor when kind=start_run "
+                       "(e.g. BeOne, Trane, Otsuka)")
+
+
+_START_RE = re.compile(r"\b(start|run|begin|kick off|monitor|track|launch)\b", re.I)
+_BRANDS = ("beone", "trane", "otsuka")
 
 
 async def _adapter_for(channel: str):
@@ -68,13 +76,27 @@ async def _pending_gate_run(project_id: str) -> Run | None:
         ).scalars().first()
 
 
+def _detect_brand(text: str) -> str:
+    low = text.lower()
+    for b in _BRANDS:
+        if b in low:
+            return {"beone": "BeOne", "trane": "Trane", "otsuka": "Otsuka"}[b]
+    return ""
+
+
 async def _classify(inbound: ChannelInbound, has_pending_gate: bool) -> InboundIntent:
+    text = f"{inbound.subject}\n{inbound.text}"
     # cheap deterministic path for clear gate replies
     if has_pending_gate:
         if _APPROVE_RE.search(inbound.text) and not _CHANGES_RE.search(inbound.text):
             return InboundIntent(kind="gate_decision", gate_decision="approved")
         if _CHANGES_RE.search(inbound.text):
             return InboundIntent(kind="gate_decision", gate_decision="changes")
+    # deterministic start-run detection (no pending gate)
+    if not has_pending_gate and _START_RE.search(text):
+        brand = _detect_brand(text)
+        if brand:
+            return InboundIntent(kind="start_run", brand=brand)
     agent = GuardedAgent(
         purpose="inbound_intent", stage="email_agent",
         system_prompt=(
@@ -116,6 +138,35 @@ async def _answer_query(project_id: str, run: Run | None, inbound: ChannelInboun
     return "\n\n".join(parts) or "I couldn't find grounded coverage for that question."
 
 
+async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> dict:
+    """Create a session for the brand and launch the pipeline on the origin channel,
+    so both human gates come back to wherever the request arrived."""
+    from app.db.models import GeneratedQuery
+    from app.orchestration.run_manager import get_run_manager
+
+    brand = brand or project.brand_name
+    query_groups = [{"name": "Brand News", "queries": [brand]}]
+    async with get_sessionmaker()() as db, db.begin():
+        gq = GeneratedQuery(project_id=project.id, brand=brand, query_groups=query_groups)
+        db.add(gq)
+        row = SessionRow(project_id=project.id,
+                         config={"brand": brand, "query_groups": query_groups})
+        db.add(row)
+        await db.flush()
+        sid = str(row.id)
+
+    run_id = await get_run_manager().start(
+        graph_name="pipeline",
+        input_state={"project_id": str(project.id), "session_id": sid,
+                     "brand": brand, "query_groups": query_groups},
+        session_id=sid,
+        origin_channel=inbound.channel,
+        origin_address=inbound.address,
+    )
+    log.info("inbound.start_run", brand=brand, channel=inbound.channel, run_id=run_id)
+    return {"run_id": run_id, "session_id": sid, "brand": brand}
+
+
 async def handle_inbound(inbound: ChannelInbound) -> dict:
     # Unverified senders are never authoritative — the From field is spoofable.
     project, sender_verified = await _match_project(inbound)
@@ -127,6 +178,16 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
     run = await _pending_gate_run(project_id)
     intent = await _classify(inbound, has_pending_gate=run is not None)
     adapter = await _adapter_for(inbound.channel)
+
+    if intent.kind == "start_run" and run is None:
+        result = await _start_run(project, intent.brand, inbound)
+        with contextlib.suppress(Exception):
+            await adapter.send(inbound.address, OutboundMessage(
+                subject=f"Re: {inbound.subject}",
+                text=(f"Starting media monitoring for {intent.brand}. I'll send the collected "
+                      f"articles here for your approval shortly (run {result['run_id'][:8]})."),
+            ))
+        return {"handled": True, "action": "start_run", **result}
 
     if intent.kind == "gate_decision" and run is not None:
         from app.orchestration.run_manager import get_run_manager
