@@ -50,19 +50,24 @@ def _wire_observability_hooks() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log.info("app.startup")
+    scheduler_task = None
     try:
         from app.orchestration.checkpoint import setup_checkpointer_tables
         from app.orchestration.run_manager import get_run_manager
+        from app.scheduler.loop import scheduler_loop
 
         await setup_checkpointer_tables()
         recovered = await get_run_manager().recovery_sweep()
         if recovered:
             log.info("app.recovered_runs", count=recovered)
+        scheduler_task = asyncio.create_task(scheduler_loop())
     except Exception as exc:
         # infra warm-up problems surface via /health, not a crashed process
         log.error("app.startup_degraded", error=str(exc))
     _wire_observability_hooks()
     yield
+    if scheduler_task:
+        scheduler_task.cancel()
     log.info("app.shutdown")
 
 

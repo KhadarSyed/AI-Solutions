@@ -26,11 +26,11 @@ async def _wait_status(run_id: str, statuses: set[str], timeout: float = 20.0) -
     raise AssertionError(f"run {run_id} never reached {statuses}, last={status}")
 
 
-async def test_full_lifecycle_with_gates_and_events():
+async def test_full_lifecycle_with_gates_and_events(blank_session):
     await setup_checkpointer_tables()
     rm = get_run_manager()
 
-    run_id = await rm.start(graph_name="pipeline", input_state={"project_id": "p1"})
+    run_id = await rm.start(graph_name="pipeline", input_state=blank_session)
     assert await _wait_status(run_id, {"awaiting_human"}) == "awaiting_human"
 
     # gate 1 payload persisted on the run row
@@ -57,23 +57,14 @@ async def test_full_lifecycle_with_gates_and_events():
     assert "collect" in nodes_finished and "reflect" in nodes_finished
 
 
-async def test_session_mutex_blocks_second_run():
+async def test_session_mutex_blocks_second_run(blank_session):
     rm = get_run_manager()
-    async with get_sessionmaker()() as db, db.begin():
-        from app.db.models import Project, Session
+    sid = blank_session["session_id"]
 
-        project = Project(name="t", brand_name="t")
-        db.add(project)
-        await db.flush()
-        session_row = Session(project_id=project.id)
-        db.add(session_row)
-        await db.flush()
-        sid = str(session_row.id)
-
-    run_id = await rm.start(graph_name="pipeline", input_state={}, session_id=sid)
+    run_id = await rm.start(graph_name="pipeline", input_state=blank_session, session_id=sid)
     await _wait_status(run_id, {"awaiting_human"})
     try:
-        await rm.start(graph_name="pipeline", input_state={}, session_id=sid)
+        await rm.start(graph_name="pipeline", input_state=blank_session, session_id=sid)
         raise AssertionError("second run on same session must be refused")
     except RuntimeError as exc:
         assert "active run" in str(exc)

@@ -1,5 +1,5 @@
-"""Skeleton pipeline graph: interrupt at both gates, resume on approval,
-durable state in the Postgres checkpointer."""
+"""Wired pipeline graph: real services end-to-end (offline, zero-article session),
+interrupt at both gates, resume on approval, durable Postgres checkpoints."""
 
 import uuid
 
@@ -9,16 +9,18 @@ from app.orchestration.checkpoint import checkpointer, setup_checkpointer_tables
 from app.orchestration.graphs.pipeline_graph import build_pipeline_graph
 
 
-async def test_gates_interrupt_and_resume_to_completion():
+async def test_gates_interrupt_and_resume_to_completion(blank_session):
     await setup_checkpointer_tables()
     async with checkpointer() as saver:
         graph = build_pipeline_graph(saver)
         cfg = {"configurable": {"thread_id": f"test-{uuid.uuid4()}"}}
-        init = {"session_id": "s-test", "project_id": "p-test", "origin_channel": "web"}
+        init = {**blank_session, "origin_channel": "web"}
 
         result = await graph.ainvoke(init, cfg)
         assert "__interrupt__" in result
-        assert result["__interrupt__"][0].value["gate"] == 1
+        gate1 = result["__interrupt__"][0].value
+        assert gate1["gate"] == 1
+        assert gate1["csv_key"].endswith("gate1_review.csv")
 
         result = await graph.ainvoke(Command(resume={"decision": "approved"}), cfg)
         assert result["__interrupt__"][0].value["gate"] == 2
@@ -27,16 +29,15 @@ async def test_gates_interrupt_and_resume_to_completion():
         assert "__interrupt__" not in result
         assert result["gate1_decision"] == "approved"
         assert result["gate2_decision"] == "approved"
-        assert result["notes"]["reflect"] == "stub"
+        assert result["charts_data_file_key"].endswith("charts_data_file.json")
 
 
-async def test_gate1_changes_loops_back_to_collect():
+async def test_gate1_changes_loops_back_to_collect(blank_session):
     async with checkpointer() as saver:
         graph = build_pipeline_graph(saver)
         cfg = {"configurable": {"thread_id": f"test-{uuid.uuid4()}"}}
-        await graph.ainvoke({"session_id": "s", "project_id": "p"}, cfg)
+        await graph.ainvoke({**blank_session, "origin_channel": "web"}, cfg)
 
-        # request changes → graph re-collects → interrupts at gate 1 again
         result = await graph.ainvoke(
             Command(resume={"decision": "changes", "feedback": "add competitor Carrier"}), cfg
         )
