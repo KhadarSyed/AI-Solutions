@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PR Intelligence — Live Monitor</title>
+<style>
+  :root{
+    --field:#F4F5F7;--panel:#FFFFFF;--ink:#161B22;--ink2:#57606C;--hair:#E2E5EA;
+    --navy:#12386E;--navy2:#1E4E96;--navy-soft:#E8EEF7;--gold:#9B7C2D;
+    --ok:#127A50;--ok-soft:#E2F1EA;--warn:#96660F;--warn-soft:#F8EFDC;--bad:#B3261E;
+    --heal:#6941C6;--heal-soft:#EFEAFB;--mono:Consolas,'Cascadia Code',monospace;
+    --sans:'Segoe UI',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{background:var(--field)}
+  body{margin:0;color:var(--ink);font:13.5px/1.5 var(--sans)}
+  .shell{display:grid;grid-template-columns:300px 1fr;min-height:100dvh}
+  @media(max-width:860px){.shell{grid-template-columns:1fr}}
+  /* rail */
+  .rail{background:var(--panel);border-right:1px solid var(--hair);padding:16px;overflow-y:auto;max-height:100dvh}
+  .brand b{font-size:15px}
+  .brand small{display:block;color:var(--ink2);font:600 9.5px var(--mono);letter-spacing:.16em;text-transform:uppercase;margin-top:2px}
+  .keyrow{display:flex;gap:6px;margin:12px 0}
+  .keyrow input{flex:1;font:12px var(--mono);padding:7px 9px;border:1px solid var(--hair);border-radius:6px}
+  .keyrow button,.btn{font:600 12px var(--sans);border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:6px;padding:7px 11px;cursor:pointer}
+  .btn.ghost{background:#fff;color:var(--navy)}
+  h2{font:700 10.5px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ink2);margin:16px 0 8px}
+  .run{padding:9px 10px;border:1px solid var(--hair);border-radius:8px;margin-bottom:7px;cursor:pointer}
+  .run:hover{background:#F8F9FB}
+  .run.sel{border-color:var(--navy);background:var(--navy-soft)}
+  .run .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .run code{font:11px var(--mono);color:var(--ink2)}
+  .pill{font:700 9px var(--mono);letter-spacing:.05em;padding:2px 7px;border-radius:999px;white-space:nowrap}
+  .p-running{background:var(--navy-soft);color:var(--navy)}
+  .p-awaiting_human{background:var(--warn-soft);color:var(--warn)}
+  .p-completed{background:var(--ok-soft);color:var(--ok)}
+  .p-failed{background:#F9E7E5;color:var(--bad)}
+  .p-paused,.p-interrupted,.p-cancelled{background:#EEE;color:var(--ink2)}
+  .run small{display:block;color:var(--ink2);font-size:11px;margin-top:3px}
+  /* main */
+  .main{padding:18px 22px;min-width:0}
+  .hd{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+  .hd h1{font:650 20px var(--sans);margin:0}
+  .conn{font:700 10px var(--mono);letter-spacing:.08em;padding:5px 10px;border-radius:999px}
+  .conn.live{background:var(--ok-soft);color:var(--ok)}
+  .conn.off{background:#EEE;color:var(--ink2)}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--hair);border:1px solid var(--hair);border-radius:6px;overflow:hidden;margin-bottom:12px}
+  .kpi{background:var(--panel);padding:10px 12px}
+  .kpi small{font:600 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);display:block}
+  .kpi b{font:650 18px var(--sans);font-variant-numeric:tabular-nums}
+  .stream{background:var(--panel);border:1px solid var(--hair);border-radius:8px;max-height:64vh;overflow-y:auto}
+  .stream>header{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--hair);padding:10px 14px;font:700 12px var(--sans);display:flex;justify-content:space-between}
+  .ev{display:grid;grid-template-columns:74px 96px 1fr;gap:10px;padding:7px 14px;border-bottom:1px solid #F0F1F4;font-size:12.5px;animation:in .25s ease-out}
+  @keyframes in{from{opacity:0;transform:translateY(-3px)}to{opacity:1}}
+  .ev time{font:600 11px var(--mono);color:var(--ink2)}
+  .op{font:700 9px var(--mono);letter-spacing:.05em;border-radius:3px;padding:3px 6px;height:fit-content;text-align:center;white-space:nowrap}
+  .op-node{background:var(--navy-soft);color:var(--navy)}
+  .op-gate{background:var(--warn-soft);color:var(--warn)}
+  .op-mem{background:var(--ok-soft);color:var(--ok)}
+  .op-heal{background:var(--heal-soft);color:var(--heal)}
+  .op-notif{background:#FCEFD8;color:var(--gold)}
+  .op-run{background:#EAECEF;color:var(--ink2)}
+  .op-fail{background:#F9E7E5;color:var(--bad)}
+  .ev .body{min-width:0;word-break:break-word}
+  .ev .body b{color:var(--navy)}
+  .empty{padding:40px;text-align:center;color:var(--ink2)}
+  .foot{margin-top:10px;color:var(--ink2);font:11px var(--mono)}
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="rail">
+    <div class="brand"><b>PR Intelligence</b><small>Live Monitor</small></div>
+    <div class="keyrow">
+      <input id="key" type="password" placeholder="X-API-Key" autocomplete="off">
+      <button onclick="saveKey()">Save</button>
+    </div>
+    <div style="display:flex;gap:6px">
+      <button class="btn ghost" style="flex:1" onclick="loadRuns()">↻ Refresh runs</button>
+    </div>
+    <h2>Runs <span id="runCount" style="color:var(--ink2)"></span></h2>
+    <div id="runs"></div>
+  </aside>
+
+  <main class="main">
+    <div class="hd">
+      <h1 id="title">Select a run to watch its live stream</h1>
+      <span id="conn" class="conn off">DISCONNECTED</span>
+    </div>
+    <div class="kpis" id="kpis"></div>
+    <section class="stream">
+      <header><span>Event stream</span><span id="seqLabel" style="color:var(--ink2);font-weight:400"></span></header>
+      <div id="events"><div class="empty">Pick a run on the left. Events (node transitions,
+        memory ops, gates, notifications, self-heal) appear here in real time as they happen.</div></div>
+    </section>
+    <div class="foot">Streaming from <code>/ws/runs/{run_id}</code> · replay + live · Meridian design</div>
+  </main>
+</div>
+
+<script>
+let API = location.origin;
+let KEY = localStorage.getItem("prsol_key") || "";
+let ws = null, current = null, lastSeq = 0, counts = {};
+
+document.getElementById("key").value = KEY;
+function saveKey(){ KEY = document.getElementById("key").value.trim();
+  localStorage.setItem("prsol_key", KEY); loadRuns(); }
+
+function hdr(){ return {"X-API-Key": KEY}; }
+
+async function loadRuns(){
+  if(!KEY){ document.getElementById("runs").innerHTML =
+    '<div class="empty" style="padding:16px">Enter your API key above.</div>'; return; }
+  try{
+    const r = await fetch(API + "/runs?limit=40", {headers: hdr()});
+    if(!r.ok){ document.getElementById("runs").innerHTML =
+      `<div class="empty" style="padding:16px">HTTP ${r.status} — check the key.</div>`; return; }
+    const {runs} = await r.json();
+    document.getElementById("runCount").textContent = "· " + runs.length;
+    document.getElementById("runs").innerHTML = runs.map(rn => `
+      <div class="run ${rn.id===current?'sel':''}" onclick="watch('${rn.id}','${(rn.origin_channel||'')}')">
+        <div class="top"><code>${rn.id.slice(0,8)}</code>
+          <span class="pill p-${rn.status}">${rn.status}</span></div>
+        <small>${rn.graph} · ${rn.origin_channel}${rn.awaiting_input?(' · gate '+(rn.awaiting_input.gate||'')):''}</small>
+      </div>`).join("") || '<div class="empty" style="padding:16px">No runs yet.</div>';
+  }catch(e){ document.getElementById("runs").innerHTML =
+    '<div class="empty" style="padding:16px">'+e+'</div>'; }
+}
+
+const OP = {
+  run_started:["RUN","op-run"], run_resumed:["RESUME","op-run"], run_completed:["DONE","op-run"],
+  run_failed:["FAILED","op-fail"], run_paused:["PAUSED","op-run"], run_cancelled:["CANCEL","op-run"],
+  node_finished:["NODE","op-node"], gate_raised:["GATE","op-gate"], awaiting_human:["GATE","op-gate"],
+  memory_op:["MEMORY","op-mem"], notification_sent:["NOTIFY","op-notif"], result_delivered:["DELIVER","op-notif"],
+  heal_started:["HEAL","op-heal"], heal_source:["HEAL","op-heal"], heal_result:["HEAL","op-heal"],
+  run_recovered_as_interrupted:["RECOVER","op-run"], ping:["·","op-run"],
+};
+
+function addEvent(ev){
+  if(ev.event_type==="ping") return;
+  const box = document.getElementById("events");
+  if(box.querySelector(".empty")) box.innerHTML = "";
+  counts[ev.event_type] = (counts[ev.event_type]||0)+1;
+  renderKpis(ev);
+  const [label,cls] = OP[ev.event_type] || [ev.event_type.toUpperCase().slice(0,6),"op-node"];
+  const t = (ev.at||"").slice(11,19) || new Date().toLocaleTimeString();
+  const p = ev.payload || {};
+  let desc = ev.node ? `<b>${ev.node}</b> ` : "";
+  if(ev.event_type==="memory_op") desc += `${p.op||""} ${p.type||""} — ${p.summary||""}`;
+  else if(ev.event_type==="notification_sent"||ev.event_type==="result_delivered")
+    desc += `→ ${p.channel||""} ${p.message||""}`;
+  else if(ev.event_type==="gate_raised"||ev.event_type==="awaiting_human")
+    desc += `gate ${p.gate||""} · ${p.kind||""} — awaiting approval in ${p.channel||"channel"}`;
+  else if(ev.event_type.startsWith("heal")) desc += JSON.stringify(p).slice(0,180);
+  else if(p.delta) desc += Object.entries(p.delta).map(([k,v])=>`${k}=${v}`).join(" · ").slice(0,180);
+  else if(p.error) desc += p.error;
+  const row = document.createElement("div");
+  row.className = "ev";
+  row.innerHTML = `<time>${t}</time><span class="op ${cls}">${label}</span><span class="body">${desc||ev.event_type}</span>`;
+  box.appendChild(row);
+  box.scrollTop = box.scrollHeight;
+  document.getElementById("seqLabel").textContent = "seq " + (ev.seq||"");
+}
+
+function renderKpis(ev){
+  const el = document.getElementById("kpis");
+  const nodes = counts.node_finished||0, mem = counts.memory_op||0,
+        gates = (counts.gate_raised||0), notif=(counts.notification_sent||0)+(counts.result_delivered||0),
+        heal=(counts.heal_result||0);
+  el.innerHTML = [["Nodes",nodes],["Memory ops",mem],["Gates",gates],
+    ["Notifications",notif],["Self-heals",heal]].map(([k,v])=>
+    `<div class="kpi"><small>${k}</small><b>${v}</b></div>`).join("");
+}
+
+function watch(id, channel){
+  current = id; lastSeq = 0; counts = {};
+  document.querySelectorAll(".run").forEach(r=>r.classList.remove("sel"));
+  event && event.currentTarget && event.currentTarget.classList.add("sel");
+  loadRuns();
+  document.getElementById("title").innerHTML = `Run <code style="font:600 15px var(--mono)">${id.slice(0,8)}</code> <span style="color:var(--ink2);font-size:13px">· ${channel}</span>`;
+  document.getElementById("events").innerHTML = "";
+  document.getElementById("kpis").innerHTML = "";
+  if(ws){ ws.close(); ws=null; }
+  const proto = location.protocol==="https:"?"wss":"ws";
+  ws = new WebSocket(`${proto}://${location.host}/ws/runs/${id}?api_key=${encodeURIComponent(KEY)}&from_seq=0`);
+  const conn = document.getElementById("conn");
+  ws.onopen = ()=>{ conn.className="conn live"; conn.textContent="● LIVE"; };
+  ws.onclose = ()=>{ conn.className="conn off"; conn.textContent="DISCONNECTED"; };
+  ws.onmessage = e=>{ try{ addEvent(JSON.parse(e.data)); }catch(_){} };
+}
+
+if(KEY) loadRuns();
+setInterval(()=>{ if(KEY && !current) loadRuns(); }, 5000);
+</script>
+</body>
+</html>

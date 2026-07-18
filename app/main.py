@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from app.api.routes.admin import router as admin_router
 from app.api.routes.charts import router as charts_router
 from app.api.routes.dashboards import router as dashboards_router
+from app.api.routes.monitor import router as monitor_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.report import router as report_router
 from app.api.routes.review import router as review_router
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="PR Intelligence Agent", version="0.1.0", lifespan=lifespan)
     setup_tracing(app)
     app.include_router(admin_router)
+    app.include_router(monitor_router)
     app.include_router(projects_router)
     app.include_router(sessions_router)
     app.include_router(review_router)
