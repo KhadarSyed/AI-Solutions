@@ -63,16 +63,24 @@ class TeamsMcpAdapter(ChannelAdapter):
             callback_handler=_no_callback,
         )
 
-    async def _call(self, tool: str, args: dict) -> dict:
+    async def _call(self, tool: str, args: dict, read_timeout: float = 60.0) -> dict:
+        from datetime import timedelta
+
         from mcp import ClientSession
         from mcp.client.streamable_http import streamablehttp_client
 
         url = get_settings().teams_mcp_url
         async with _TOKEN_LOCK, \
-                streamablehttp_client(url, auth=self._auth_provider()) as (read, write, *_), \
+                streamablehttp_client(
+                    url, auth=self._auth_provider(),
+                    timeout=timedelta(seconds=read_timeout),
+                    sse_read_timeout=timedelta(seconds=read_timeout),
+                ) as (read, write, *_), \
                 ClientSession(read, write) as session:
             await session.initialize()
-            result = await session.call_tool(tool, args)
+            result = await session.call_tool(
+                tool, args, read_timeout_seconds=timedelta(seconds=read_timeout)
+            )
             out = {}
             for item in result.content:
                 text = getattr(item, "text", None)
@@ -123,8 +131,10 @@ class TeamsMcpAdapter(ChannelAdapter):
         """Activate mention capture across chats, channels, and mail. Must run
         before get_pending_mentions returns anything."""
         try:
+            # Render free tier: subscribe is slow; 60s default crashes it (needs ~180s)
             await self._call("subscribe_to_mentions",
-                             {"resources": ["teams_chats", "teams_channels", "email"]})
+                             {"resources": ["teams_chats", "teams_channels", "email"]},
+                             read_timeout=180.0)
             log.info("teams.subscribed")
             return True
         except Exception as exc:

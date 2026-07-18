@@ -69,11 +69,11 @@ async def main() -> None:
             print("(couldn't auto-open a browser — copy the URL above)")
 
     async def callback_handler() -> tuple[str, str | None]:
-        for _ in range(600):  # up to ~5 min
+        for _ in range(1800):  # up to ~15 min
             if _result.get("code"):
                 return _result["code"], _result.get("state")
             await asyncio.sleep(0.5)
-        raise TimeoutError("no OAuth callback received within 5 minutes")
+        raise TimeoutError("no OAuth callback received within 15 minutes")
 
     provider = OAuthClientProvider(
         server_url=s.teams_mcp_url,
