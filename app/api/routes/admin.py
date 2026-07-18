@@ -1,10 +1,17 @@
+from typing import Annotated
+
 import redis.asyncio as aioredis
-from fastapi import APIRouter
-from sqlalchemy import text
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.settings import get_settings
+from app.db.base import get_db
+from app.db.models import GuardrailEvent, LLMCall
 
 router = APIRouter(tags=["admin"])
+
+DB = Annotated[AsyncSession, Depends(get_db)]
 
 
 @router.get("/health")
@@ -43,3 +50,66 @@ async def health() -> dict:
 
     overall = "ok" if all(v == "up" for v in status.values()) else "degraded"
     return {"status": overall, **status}
+
+
+@router.get("/admin/llm-calls")
+async def llm_calls(db: DB, limit: int = Query(50, le=500)) -> dict:
+    rows = (
+        await db.execute(select(LLMCall).order_by(LLMCall.created_at.desc()).limit(limit))
+    ).scalars().all()
+    totals = (
+        await db.execute(
+            select(
+                func.count(LLMCall.id),
+                func.coalesce(func.sum(LLMCall.cost_usd), 0),
+                func.coalesce(func.sum(LLMCall.input_tokens + LLMCall.output_tokens), 0),
+            )
+        )
+    ).one()
+    return {
+        "total_calls": totals[0],
+        "total_cost_usd": float(totals[1]),
+        "total_tokens": int(totals[2]),
+        "calls": [
+            {
+                "at": r.created_at.isoformat(),
+                "provider": r.provider,
+                "model": r.model,
+                "stage": r.stage,
+                "purpose": r.purpose,
+                "in_tokens": r.input_tokens,
+                "out_tokens": r.output_tokens,
+                "cost_usd": float(r.cost_usd),
+                "latency_ms": r.latency_ms,
+                "cache_hit": r.cache_hit,
+                "fallback_used": r.fallback_used,
+                "status": r.status,
+            }
+            for r in rows
+        ],
+    }
+
+
+@router.get("/admin/guardrail-events")
+async def guardrail_events(
+    db: DB,
+    limit: int = Query(50, le=500),
+    verdict: str | None = None,
+) -> dict:
+    q = select(GuardrailEvent).order_by(GuardrailEvent.created_at.desc()).limit(limit)
+    if verdict:
+        q = q.where(GuardrailEvent.verdict == verdict)
+    rows = (await db.execute(q)).scalars().all()
+    return {
+        "events": [
+            {
+                "at": r.created_at.isoformat(),
+                "request_id": r.request_id,
+                "direction": r.direction,
+                "check": r.check_name,
+                "verdict": r.verdict,
+                "details": r.details,
+            }
+            for r in rows
+        ]
+    }

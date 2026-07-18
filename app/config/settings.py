@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     llm_batch_size: int = 20
     llm_concurrency: int = 5
 
+    # Guardrails
+    nemo_rails_enabled: bool = True  # effective only when Azure OpenAI keys are present
+
     # Tracing (empty = disabled)
     langsmith_api_key: str = ""
     langsmith_project: str = "pr-intelligence-agent"
