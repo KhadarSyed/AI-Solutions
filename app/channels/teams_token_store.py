@@ -4,6 +4,7 @@ Persisting the refresh token to disk is what makes the credential durable: the
 MCP OAuthClientProvider auto-refreshes the access token from it, so a one-time
 interactive sign-in keeps the unattended backend authenticated indefinitely."""
 
+import contextlib
 import json
 from pathlib import Path
 
@@ -31,10 +32,8 @@ class FileTokenStorage(TokenStorage):
     def _write(self, data: dict) -> None:
         # create owner-only, then write — the file holds a refresh token
         self._path.touch(mode=0o600, exist_ok=True)
-        try:
-            self._path.chmod(0o600)
-        except (OSError, NotImplementedError):
-            pass  # Windows ignores POSIX modes; ACLs govern there
+        with contextlib.suppress(OSError, NotImplementedError):
+            self._path.chmod(0o600)  # Windows ignores POSIX modes; ACLs govern there
         self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     async def get_tokens(self) -> OAuthToken | None:
