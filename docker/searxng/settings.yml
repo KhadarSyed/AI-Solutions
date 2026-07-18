@@ -1,0 +1,23 @@
+use_default_settings: true
+
+server:
+  secret_key: "prsol-local-searxng-secret"
+  limiter: false
+  public_instance: false
+
+search:
+  formats:
+    - html
+    - json
+
+engines:
+  - name: duckduckgo
+    disabled: false
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: google news
+    disabled: false
+  - name: bing news
+    disabled: false
