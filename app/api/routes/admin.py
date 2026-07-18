@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config.settings import get_settings
 from app.db.base import get_db
 from app.db.models import GuardrailEvent, LLMCall
+from app.security.auth import require_admin
 
 router = APIRouter(tags=["admin"])
 
@@ -52,7 +53,7 @@ async def health() -> dict:
     return {"status": overall, **status}
 
 
-@router.get("/admin/llm-calls")
+@router.get("/admin/llm-calls", dependencies=[Depends(require_admin)])
 async def llm_calls(db: DB, limit: int = Query(50, le=500)) -> dict:
     rows = (
         await db.execute(select(LLMCall).order_by(LLMCall.created_at.desc()).limit(limit))
@@ -90,7 +91,7 @@ async def llm_calls(db: DB, limit: int = Query(50, le=500)) -> dict:
     }
 
 
-@router.get("/admin/guardrail-events")
+@router.get("/admin/guardrail-events", dependencies=[Depends(require_admin)])
 async def guardrail_events(
     db: DB,
     limit: int = Query(50, le=500),
