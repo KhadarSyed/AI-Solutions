@@ -16,14 +16,17 @@ def setup_tracing(app=None) -> None:
     settings = get_settings()
 
     if settings.logfire_token:
-        import logfire
+        try:
+            import logfire
 
-        logfire.configure(token=settings.logfire_token, service_name="pr-intelligence-agent")
-        logfire.instrument_pydantic_ai()
-        logfire.instrument_httpx()
-        if app is not None:
-            logfire.instrument_fastapi(app)
-        log.info("tracing.logfire_enabled")
+            logfire.configure(token=settings.logfire_token, service_name="pr-intelligence-agent")
+            logfire.instrument_pydantic_ai()
+            logfire.instrument_httpx()
+            if app is not None:
+                logfire.instrument_fastapi(app)
+            log.info("tracing.logfire_enabled")
+        except Exception as exc:  # tracing must never block startup
+            log.warning("tracing.logfire_failed", error=str(exc)[:200])
 
     if settings.langsmith_api_key:
         os.environ.setdefault("LANGSMITH_TRACING", "true")

@@ -24,7 +24,7 @@ dependencies = [
     "langgraph-checkpoint-postgres>=2.0",
     "langsmith>=0.1",
     "pydantic-ai>=0.2",
-    "logfire>=3",
+    "logfire[fastapi]>=3",
     # Memory
     # 2.x dropped OSS graph memory — 1.x is the last line with Neo4j graph support
     "mem0ai[graph]>=1.0,<2.0",
