@@ -29,6 +29,12 @@ class FileTokenStorage(TokenStorage):
         return {}
 
     def _write(self, data: dict) -> None:
+        # create owner-only, then write — the file holds a refresh token
+        self._path.touch(mode=0o600, exist_ok=True)
+        try:
+            self._path.chmod(0o600)
+        except (OSError, NotImplementedError):
+            pass  # Windows ignores POSIX modes; ACLs govern there
         self._path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
     async def get_tokens(self) -> OAuthToken | None:
@@ -37,7 +43,7 @@ class FileTokenStorage(TokenStorage):
 
     async def set_tokens(self, tokens: OAuthToken) -> None:
         data = self._read()
-        data["tokens"] = tokens.model_dump(exclude_none=True)
+        data["tokens"] = tokens.model_dump(mode="json", exclude_none=True)
         self._write(data)
 
     async def get_client_info(self) -> OAuthClientInformationFull | None:
@@ -46,7 +52,7 @@ class FileTokenStorage(TokenStorage):
 
     async def set_client_info(self, client_info: OAuthClientInformationFull) -> None:
         data = self._read()
-        data["client_info"] = client_info.model_dump(exclude_none=True)
+        data["client_info"] = client_info.model_dump(mode="json", exclude_none=True)
         self._write(data)
 
     def has_credentials(self) -> bool:
