@@ -63,8 +63,14 @@ async def inbound_loop() -> None:
         return
     from app.agents.email_agent import handle_inbound
 
+    # Teams needs an active mention subscription before polling returns anything.
+    for adapter in adapters:
+        if hasattr(adapter, "subscribe"):
+            await adapter.subscribe()
+
     r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
     log.info("channels.inbound_started", every=INBOUND_INTERVAL)
+    ticks = 0
     while True:
         with contextlib.suppress(asyncio.CancelledError):
             for adapter in adapters:
@@ -76,4 +82,9 @@ async def inbound_loop() -> None:
                             if not fresh:
                                 continue
                         await handle_inbound(inbound)
+            ticks += 1
+            if ticks % 60 == 0:  # ~every 30 min: keep Teams subscriptions alive
+                for adapter in adapters:
+                    if hasattr(adapter, "renew"):
+                        await adapter.renew()
         await asyncio.sleep(INBOUND_INTERVAL)

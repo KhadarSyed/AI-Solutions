@@ -6,6 +6,7 @@ inbound. Enabled only when TEAMS_MCP_URL is set (needs a durable OAuth token on
 the server — see the plan's risks). Tool names are resolved dynamically so the
 adapter tolerates server-side renames."""
 
+import asyncio
 import contextlib
 from collections.abc import AsyncIterator
 
@@ -14,6 +15,10 @@ from app.config.settings import get_settings
 from app.observability.logging import get_logger
 
 log = get_logger(__name__)
+
+# Serialize all teams-mcp calls process-wide: the OAuth provider rotates the
+# refresh token on renewal, and concurrent renewals invalidate each other.
+_TOKEN_LOCK = asyncio.Lock()
 
 
 class TeamsMcpAdapter(ChannelAdapter):
@@ -63,7 +68,8 @@ class TeamsMcpAdapter(ChannelAdapter):
         from mcp.client.streamable_http import streamablehttp_client
 
         url = get_settings().teams_mcp_url
-        async with streamablehttp_client(url, auth=self._auth_provider()) as (read, write, *_), \
+        async with _TOKEN_LOCK, \
+                streamablehttp_client(url, auth=self._auth_provider()) as (read, write, *_), \
                 ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(tool, args)
@@ -112,6 +118,22 @@ class TeamsMcpAdapter(ChannelAdapter):
                 if url:
                     links.append((name, url))
         return links
+
+    async def subscribe(self) -> bool:
+        """Activate mention capture across chats, channels, and mail. Must run
+        before get_pending_mentions returns anything."""
+        try:
+            await self._call("subscribe_to_mentions",
+                             {"resources": ["teams_chats", "teams_channels", "email"]})
+            log.info("teams.subscribed")
+            return True
+        except Exception as exc:
+            log.info("teams.subscribe_failed", error=str(exc)[:150])
+            return False
+
+    async def renew(self) -> None:
+        with contextlib.suppress(Exception):
+            await self._call("renew_subscriptions", {})
 
     async def poll_inbound(self) -> AsyncIterator[ChannelInbound]:
         try:
