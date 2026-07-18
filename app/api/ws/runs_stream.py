@@ -8,6 +8,7 @@ from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
 
 from app.observability.logging import get_logger
 from app.orchestration.events import channel_for, get_event_bus
+from app.security.auth import verify_api_key
 
 log = get_logger(__name__)
 
@@ -15,7 +16,17 @@ router = APIRouter()
 
 
 @router.websocket("/ws/runs/{run_id}")
-async def run_stream(ws: WebSocket, run_id: uuid.UUID, from_seq: int = Query(0)) -> None:
+async def run_stream(
+    ws: WebSocket,
+    run_id: uuid.UUID,
+    from_seq: int = Query(0),
+    api_key: str | None = Query(None),
+) -> None:
+    # browsers can't set headers on WebSocket connects — key travels as query param
+    ok, reason = verify_api_key(api_key)
+    if not ok:
+        await ws.close(code=4403, reason=reason)
+        return
     await ws.accept()
     bus = get_event_bus()
 
