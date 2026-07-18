@@ -20,6 +20,12 @@ log = get_logger(__name__)
 # refresh token on renewal, and concurrent renewals invalidate each other.
 _TOKEN_LOCK = asyncio.Lock()
 
+# One OAuth provider per process. Creating a fresh provider per call re-reads the
+# token file every time and races on refresh-token rotation under frequent
+# polling; a single cached provider holds the token in memory and refreshes at
+# most once per access-token lifetime, so any poll cadence is safe.
+_PROVIDER = None
+
 
 def _unwrap(exc: BaseException) -> str:
     """anyio TaskGroups wrap the real cause in an ExceptionGroup — surface it."""
@@ -41,6 +47,10 @@ class TeamsMcpAdapter(ChannelAdapter):
         return FileTokenStorage().has_credentials()
 
     def _auth_provider(self):
+        global _PROVIDER
+        if _PROVIDER is not None:
+            return _PROVIDER
+
         from mcp.client.auth import OAuthClientProvider
         from mcp.shared.auth import OAuthClientMetadata
 
@@ -57,7 +67,7 @@ class TeamsMcpAdapter(ChannelAdapter):
         async def _no_callback() -> tuple[str, str | None]:
             raise RuntimeError("teams-mcp requires interactive re-auth")
 
-        return OAuthClientProvider(
+        _PROVIDER = OAuthClientProvider(
             server_url=s.teams_mcp_url,
             client_metadata=OAuthClientMetadata(
                 client_name="PR Intelligence Agent",
@@ -70,6 +80,7 @@ class TeamsMcpAdapter(ChannelAdapter):
             redirect_handler=_no_interactive,
             callback_handler=_no_callback,
         )
+        return _PROVIDER
 
     async def _call(self, tool: str, args: dict, read_timeout: float = 60.0) -> dict:
         from datetime import timedelta
