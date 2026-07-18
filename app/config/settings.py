@@ -56,6 +56,7 @@ class Settings(BaseSettings):
     # Execution
     max_concurrent_runs: int = 4
     run_event_retention_days: int = 30
+    inbound_poll_seconds: int = 5          # email + teams chat/channel poll cadence
 
     # Self-healing
     self_heal_enabled: bool = True

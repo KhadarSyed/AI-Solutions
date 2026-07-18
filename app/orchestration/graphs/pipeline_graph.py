@@ -192,6 +192,18 @@ async def reflect(state: PipelineState) -> dict:
     return {"notes": {"reflect": {"feedback_rules_distilled": distilled}}}
 
 
+async def deliver(state: PipelineState) -> dict:
+    """Send the finished analysis back to the origin channel (email thread / Teams
+    chat or channel). Web/scheduler origins just see the run stream."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from app.channels.notifier import notify_complete
+
+        await notify_complete(state)
+    return {"notes": {"deliver": {"channel": state.get("origin_channel")}}}
+
+
 def _route_gate1(state: PipelineState) -> str:
     return "tag" if state.get("gate1_decision") == "approved" else "collect"
 
@@ -209,6 +221,7 @@ def build_pipeline_graph(checkpointer=None):
     g.add_node("gate2_approval", gate2_approval)
     g.add_node("dashboards", dashboards)
     g.add_node("reflect", reflect)
+    g.add_node("deliver", deliver)
 
     g.add_edge(START, "collect")
     g.add_edge("collect", "enrich")
@@ -219,7 +232,8 @@ def build_pipeline_graph(checkpointer=None):
         "gate2_approval", _route_gate2, {"dashboards": "dashboards", "tag": "tag"}
     )
     g.add_edge("dashboards", "reflect")
-    g.add_edge("reflect", END)
+    g.add_edge("reflect", "deliver")
+    g.add_edge("deliver", END)
 
     return g.compile(checkpointer=checkpointer)
 

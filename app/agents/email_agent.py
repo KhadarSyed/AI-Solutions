@@ -48,16 +48,31 @@ async def _adapter_for(channel: str):
     return EmailAdapter()
 
 
+def _sender_candidates(sender: str) -> set[str]:
+    """Normalize an inbound sender to candidate emails. Teams B2B guests arrive
+    as a mangled UPN like `khadar.syed_infovision.com#EXT#@tenant.onmicrosoft.com`
+    — recover the home email `khadar.syed@infovision.com`."""
+    s = sender.strip().lower()
+    out = {s}
+    if "#ext#" in s:
+        local_domain = s.split("#ext#")[0]          # khadar.syed_infovision.com
+        at = local_domain.rfind("_")
+        if at != -1:
+            out.add(local_domain[:at] + "@" + local_domain[at + 1:])
+    return {c for c in out if "@" in c}
+
+
 async def _match_project(inbound: ChannelInbound) -> tuple[Project | None, bool]:
     """Returns (project, sender_verified). sender_verified is True only when the
-    inbound sender is a registered stakeholder — the sole basis for any
+    inbound sender maps to a registered stakeholder — the sole basis for any
     state-mutating action. Brand-name-in-subject is NOT authorization (the From
     field is spoofable); no single-project fail-open."""
     async with get_sessionmaker()() as db:
         projects = (await db.execute(select(Project))).scalars().all()
-    sender = inbound.sender.lower()
+    candidates = _sender_candidates(inbound.sender)
     for p in projects:
-        if sender and sender in [e.lower() for e in (p.stakeholder_emails or [])]:
+        stakeholders = {e.lower() for e in (p.stakeholder_emails or [])}
+        if candidates & stakeholders:
             return p, True
     return None, False
 
