@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     self_heal_enabled: bool = True
     self_heal_browser: bool = False  # browser-assisted fix path (Phase C runtime)
 
+    # Browser MCP (navigation for enrichment + self-heal; needs Node.js)
+    browser_mcp_enabled: bool = False
+    browser_mcp_command: str = "npx -y @agent360/browser-mcp"
+
     # Sandbox
     sandbox_backend: Literal["docker", "e2b"] = "docker"
     sandbox_container: str = "prsol-sandbox"

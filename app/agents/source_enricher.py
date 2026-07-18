@@ -1,0 +1,189 @@
+"""Per-source enrichment sub-agent — resolves missing country/author for
+publisher domains: cheap heuristics → research memory → About/Contact page
+navigation → LLM extraction → URL cross-verification. Unresolved stays "all".
+
+Learned facts are stored as RESEARCH memories so future runs skip the fetch.
+"""
+
+import asyncio
+import contextlib
+import re
+
+from pydantic import BaseModel, Field
+
+from app.llm_gateway.guarded import GuardedAgent
+from app.memory.mem0_service import MemoryType, recall, remember
+from app.observability.logging import get_logger
+from app.tools.connectors.base import RawArticle
+from app.tools.scraping.extractor import extract_metadata
+from app.tools.scraping.fetcher import fetch_html
+
+log = get_logger(__name__)
+
+MAX_DOMAIN_FETCHES_PER_RUN = 15
+
+_CCTLD = {
+    ".co.uk": "GB", ".uk": "GB", ".de": "DE", ".fr": "FR", ".in": "IN", ".com.au": "AU",
+    ".au": "AU", ".ca": "CA", ".jp": "JP", ".cn": "CN", ".sg": "SG", ".ae": "AE",
+    ".sa": "SA", ".br": "BR", ".mx": "MX", ".es": "ES", ".it": "IT", ".nl": "NL",
+    ".se": "SE", ".ch": "CH", ".ie": "IE", ".nz": "NZ", ".za": "ZA", ".kr": "KR",
+}
+
+_ABOUT_LINK = re.compile(r'href="([^"]*(?:about|contact)[^"]*)"', re.I)
+
+
+class DomainFacts(BaseModel):
+    country: str = Field(description='ISO-3166 alpha-2 country code, or "all" if truly unclear')
+    author_desk: str = Field(default="", description="Editorial desk or main byline if stated")
+    confidence: float = Field(ge=0, le=1)
+    evidence: str = Field(default="", description="Short quote or page fact supporting the country")
+
+
+def country_from_tld(domain: str) -> str | None:
+    d = domain.lower()
+    for suffix, code in sorted(_CCTLD.items(), key=lambda kv: -len(kv[0])):
+        if d.endswith(suffix):
+            return code
+    return None
+
+
+async def _get_page(url: str) -> str:
+    """Browser-MCP navigation when enabled, else httpx→Scrapling fetch."""
+    from app.tools.scraping import browser_mcp
+
+    if browser_mcp.enabled():
+        try:
+            return await browser_mcp.navigate_and_read(url)
+        except Exception as exc:
+            log.info("enricher.browser_mcp_fallback", url=url, error=str(exc)[:120])
+    return await fetch_html(url, timeout=12)
+
+
+async def _facts_from_about_pages(domain: str) -> DomainFacts | None:
+    """Navigate homepage → About/Contact links → footer; extract via the gateway."""
+    try:
+        home = await _get_page(f"https://{domain}")
+    except Exception as exc:
+        log.info("enricher.home_fetch_failed", domain=domain, error=str(exc)[:120])
+        return None
+
+    texts: list[str] = []
+    for href in _ABOUT_LINK.findall(home)[:2]:
+        url = href if href.startswith("http") else f"https://{domain}/{href.lstrip('/')}"
+        try:
+            page = await _get_page(url)
+            texts.append(page[-6000:])          # footers live at the bottom
+        except Exception:
+            continue
+    texts.append(home[-4000:])                  # homepage footer as last resort
+
+    if not any(texts):
+        return None
+
+    extractor = GuardedAgent(
+        purpose="domain_facts",
+        stage="enrich",
+        system_prompt=(
+            "You extract publisher facts from About/Contact/footer page fragments. "
+            "Return the publisher's home country as ISO alpha-2 (postal addresses, "
+            "'based in', legal imprint are strong evidence). If nothing concrete, country='all'."
+        ),
+        output_type=DomainFacts,
+        temperature=0.0,
+        cacheable=True,
+    )
+    try:
+        return await extractor.run(
+            f"Publisher domain: {domain}\n\nPage fragments:\n" + "\n---\n".join(t for t in texts if t)
+        )
+    except Exception as exc:
+        log.warning("enricher.extract_failed", domain=domain, error=str(exc)[:150])
+        return None
+
+
+async def resolve_domain(domain: str, project_id: str) -> DomainFacts:
+    # 1 — research memory (learned on an earlier run)
+    try:
+        hits = await recall(
+            agent="enricher", query=f"publisher facts for {domain}", project_id=project_id,
+            memory_type=MemoryType.RESEARCH, limit=2,
+        )
+        for h in hits:
+            text = str(h.get("memory", ""))
+            m = re.search(rf"{re.escape(domain)}\s*→\s*country\s+([A-Z]{{2}})", text)
+            if m:
+                return DomainFacts(country=m.group(1), confidence=0.9, evidence="research memory")
+    except Exception:
+        pass  # memory outage never blocks enrichment
+
+    # 2 — ccTLD heuristic
+    tld_country = country_from_tld(domain)
+
+    # 3 — About/Contact navigation + extraction
+    facts = await _facts_from_about_pages(domain)
+
+    if facts and facts.country != "all":
+        # 4 — cross-verify against the URL's ccTLD when both exist
+        if tld_country and tld_country != facts.country and facts.confidence < 0.8:
+            facts.country = tld_country
+            facts.evidence += f" (overridden by ccTLD {tld_country})"
+        resolved = facts
+    elif tld_country:
+        resolved = DomainFacts(country=tld_country, confidence=0.7, evidence="ccTLD")
+    else:
+        resolved = DomainFacts(country="all", confidence=0.0, evidence="unresolved")
+
+    if resolved.country != "all":
+        with contextlib.suppress(Exception):  # memory outage never blocks enrichment
+            await remember(
+                agent="enricher", memory_type=MemoryType.RESEARCH, project_id=project_id,
+                content=f"{domain} → country {resolved.country}"
+                + (f", desk: {resolved.author_desk}" if resolved.author_desk else "")
+                + f" ({resolved.evidence})",
+                metadata={"domain": domain},
+            )
+    return resolved
+
+
+async def enrich_articles(articles: list[RawArticle], project_id: str) -> dict:
+    """Fill missing country/author in place. Fetch budget applies per unique domain."""
+    need = [a for a in articles if a.country in ("", "all") or not a.author]
+    domains = list({a.publisher_domain for a in need if a.publisher_domain})
+    budget = domains[:MAX_DOMAIN_FETCHES_PER_RUN]
+
+    sem = asyncio.Semaphore(4)
+    resolved: dict[str, DomainFacts] = {}
+
+    async def one(domain: str) -> None:
+        async with sem:
+            resolved[domain] = await resolve_domain(domain, project_id)
+
+    await asyncio.gather(*(one(d) for d in budget))
+
+    stats = {"domains_considered": len(domains), "domains_fetched": len(budget),
+             "countries_resolved": 0, "authors_filled": 0}
+    for a in articles:
+        facts = resolved.get(a.publisher_domain)
+        if not facts:
+            continue
+        if a.country in ("", "all") and facts.country != "all":
+            a.country = facts.country
+            stats["countries_resolved"] += 1
+        if not a.author and facts.author_desk:
+            a.author = facts.author_desk
+            stats["authors_filled"] += 1
+
+    # article-page byline pass for still-missing authors (cheap metadata extract)
+    missing_author = [a for a in articles if not a.author][:10]
+    for a in missing_author:
+        try:
+            html = await fetch_html(a.url, timeout=10)
+            meta = extract_metadata(html, a.url)
+            if meta.get("author"):
+                a.author = meta["author"]
+                stats["authors_filled"] += 1
+        except Exception:
+            continue
+
+    log.info("enricher.done", **stats)
+    return stats
