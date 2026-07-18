@@ -38,12 +38,22 @@ def specs() -> dict[str, ModelSpec]:
     }
 
 
-def primary_spec() -> ModelSpec:
-    return specs()[get_settings().llm_provider]
+def provider_for(stage: str | None = None) -> str:
+    """Stage-scoped provider: per-stage override wins, else the global default."""
+    s = get_settings()
+    if stage and stage in s.llm_provider_overrides:
+        override = s.llm_provider_overrides[stage]
+        if override in ("gpt", "claude"):
+            return override
+    return s.llm_provider
 
 
-def fallback_spec() -> ModelSpec:
-    other = "claude" if get_settings().llm_provider == "gpt" else "gpt"
+def primary_spec(stage: str | None = None) -> ModelSpec:
+    return specs()[provider_for(stage)]
+
+
+def fallback_spec(stage: str | None = None) -> ModelSpec:
+    other = "claude" if provider_for(stage) == "gpt" else "gpt"
     return specs()[other]
 
 

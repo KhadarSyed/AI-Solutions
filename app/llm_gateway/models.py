@@ -13,7 +13,7 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.azure import AzureProvider
 
 from app.config.settings import get_settings
-from app.llm_gateway.registry import ModelSpec, fallback_spec, primary_spec
+from app.llm_gateway.registry import ModelSpec, fallback_spec, primary_spec, specs
 from app.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -40,9 +40,10 @@ def _build_single(spec: ModelSpec) -> Model | None:
 
 
 @lru_cache
-def build_model() -> Model:
-    primary = _build_single(primary_spec())
-    secondary = _build_single(fallback_spec())
+def _build_for(primary_provider: str) -> Model:
+    primary = _build_single(specs()[primary_provider])
+    other = "claude" if primary_provider == "gpt" else "gpt"
+    secondary = _build_single(specs()[other])
 
     if primary and secondary:
         return FallbackModel(primary, secondary)
@@ -53,16 +54,22 @@ def build_model() -> Model:
         log.warning("llm_gateway.primary_missing", detail="using secondary provider only")
         return secondary
     raise RuntimeError(
-        "No LLM provider configured — set AZURE_OPENAI_API_KEY/ENDPOINT or ANTHROPIC_API_KEY"
+        "No LLM provider configured — set ANTHROPIC_API_KEY or AZURE_OPENAI_API_KEY/ENDPOINT"
     )
 
 
-def active_spec() -> ModelSpec:
-    """Spec of the provider that will serve as primary given current keys."""
+def build_model(stage: str | None = None) -> Model:
+    from app.llm_gateway.registry import provider_for
+
+    return _build_for(provider_for(stage))
+
+
+def active_spec(stage: str | None = None) -> ModelSpec:
+    """Spec of the provider that will actually serve as primary given current keys."""
     s = get_settings()
-    p = primary_spec()
+    p = primary_spec(stage)
     if p.provider == "gpt" and not (s.azure_openai_api_key and s.azure_openai_endpoint):
-        return fallback_spec()
+        return fallback_spec(stage)
     if p.provider == "claude" and not s.anthropic_api_key:
-        return fallback_spec()
+        return fallback_spec(stage)
     return p

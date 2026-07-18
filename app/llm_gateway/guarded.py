@@ -49,14 +49,14 @@ class GuardedAgent[T]:
         self._output_type = output_type
         self._system_prompt = system_prompt
 
-        spec = active_spec()
+        spec = active_spec(stage)
         self._spec = spec
         self._model_settings = {
             "temperature": temperature,
             "max_tokens": clamp_output_tokens(spec, max_output_tokens),
         }
         self.agent: Agent = Agent(
-            build_model(),
+            build_model(stage),
             output_type=output_type,
             system_prompt=system_prompt,
             tools=tools or [],

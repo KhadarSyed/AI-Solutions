@@ -20,8 +20,13 @@ class Settings(BaseSettings):
     neo4j_password: str = "prsolneo4j"
     artifact_backend: Literal["postgres", "s3"] = "postgres"
 
-    # LLM
-    llm_provider: Literal["gpt", "claude"] = "gpt"
+    # Dashboard rendering
+    dashboard_asset_mode: Literal["embed", "cdn"] = "embed"
+    pexels_api_key: str = ""
+
+    # LLM — claude primary, Azure OpenAI is the fallback; per-stage overrides
+    llm_provider: Literal["gpt", "claude"] = "claude"
+    llm_provider_overrides: dict[str, str] = {}  # e.g. {"tagging": "gpt"}
     anthropic_api_key: str = ""
     azure_openai_api_key: str = ""
     azure_openai_endpoint: str = ""

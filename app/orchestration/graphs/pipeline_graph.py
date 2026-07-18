@@ -126,14 +126,37 @@ async def gate2_approval(state: PipelineState) -> dict:
 
 
 async def dashboards(state: PipelineState) -> dict:
+    import contextlib
+
     from app.services.dashboard_service import build_dashboards
 
     payload = await build_dashboards(session_id=state["session_id"], force=True)
+
+    # Dashboard Agent: schema (memory/graph-biased charts, liked template) → dashboard.html
+    html_built = False
+    with contextlib.suppress(Exception):
+        from app.agents.dashboard_agent import DashboardRequest, build_schema
+        from app.services.html_renderer import render
+
+        config = await _session_config(state["session_id"])
+        schema = await build_schema(DashboardRequest(
+            title=f"{config.get('brand', state.get('brand', 'Brand'))} — Media Intelligence",
+            project_id=state["project_id"],
+            session_id=state["session_id"],
+            feedback_context=state.get("gate2_feedback", ""),
+        ))
+        html = render(schema)
+        await get_artifact_store().put_bytes(
+            f"reports/{state['session_id']}/dashboard.html", html.encode(), "text/html"
+        )
+        html_built = True
+
     return {
         "approved_count": payload["approved_count"],
         "charts_data_file_key": keys.charts_data_file(state["session_id"]),
         "notes": {"dashboards": {"approved": payload["approved_count"],
-                                 "monitoring": payload["monitoring_count"]}},
+                                 "monitoring": payload["monitoring_count"],
+                                 "html_built": html_built}},
     }
 
 
