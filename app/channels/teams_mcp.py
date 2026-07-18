@@ -21,6 +21,14 @@ log = get_logger(__name__)
 _TOKEN_LOCK = asyncio.Lock()
 
 
+def _unwrap(exc: BaseException) -> str:
+    """anyio TaskGroups wrap the real cause in an ExceptionGroup — surface it."""
+    subs = getattr(exc, "exceptions", None)
+    if subs:
+        return " | ".join(_unwrap(e) for e in subs)
+    return f"{type(exc).__name__}: {exc}"
+
+
 class TeamsMcpAdapter(ChannelAdapter):
     channel = "teams"
 
@@ -138,7 +146,7 @@ class TeamsMcpAdapter(ChannelAdapter):
             log.info("teams.subscribed")
             return True
         except Exception as exc:
-            log.info("teams.subscribe_failed", error=str(exc)[:150])
+            log.info("teams.subscribe_failed", error=_unwrap(exc)[:300])
             return False
 
     async def renew(self) -> None:
@@ -149,7 +157,7 @@ class TeamsMcpAdapter(ChannelAdapter):
         try:
             res = await self._call("get_pending_mentions", {})
         except Exception as exc:
-            log.info("teams.poll_failed", error=str(exc)[:150])
+            log.info("teams.poll_failed", error=_unwrap(exc)[:300])
             return
         import json
 

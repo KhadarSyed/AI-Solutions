@@ -99,33 +99,50 @@
 </div>
 
 <script>
-let API = location.origin;
-let KEY = localStorage.getItem("prsol_key") || "";
-let ws = null, current = null, lastSeq = 0, counts = {};
+// XSS-safe: every value from the API is inserted via textContent / DOM nodes,
+// never via innerHTML string interpolation (event payloads carry LLM output and
+// email-derived text). Key lives in sessionStorage (cleared on tab close), not
+// localStorage, so an injected script can't read a long-lived credential.
+const API = location.origin;
+let KEY = sessionStorage.getItem("prsol_key") || "";
+let ws = null, current = null, counts = {};
 
 document.getElementById("key").value = KEY;
 function saveKey(){ KEY = document.getElementById("key").value.trim();
-  localStorage.setItem("prsol_key", KEY); loadRuns(); }
-
+  sessionStorage.setItem("prsol_key", KEY); loadRuns(); }
 function hdr(){ return {"X-API-Key": KEY}; }
 
+function el(tag, cls, text){
+  const e = document.createElement(tag);
+  if(cls) e.className = cls;
+  if(text != null) e.textContent = text;
+  return e;
+}
+function setEmpty(container, msg){
+  container.replaceChildren(el("div", "empty", msg));
+}
+
 async function loadRuns(){
-  if(!KEY){ document.getElementById("runs").innerHTML =
-    '<div class="empty" style="padding:16px">Enter your API key above.</div>'; return; }
+  const box = document.getElementById("runs");
+  if(!KEY){ setEmpty(box, "Enter your API key above."); return; }
   try{
     const r = await fetch(API + "/runs?limit=40", {headers: hdr()});
-    if(!r.ok){ document.getElementById("runs").innerHTML =
-      `<div class="empty" style="padding:16px">HTTP ${r.status} — check the key.</div>`; return; }
+    if(!r.ok){ setEmpty(box, "HTTP " + r.status + " — check the key."); return; }
     const {runs} = await r.json();
     document.getElementById("runCount").textContent = "· " + runs.length;
-    document.getElementById("runs").innerHTML = runs.map(rn => `
-      <div class="run ${rn.id===current?'sel':''}" onclick="watch('${rn.id}','${(rn.origin_channel||'')}')">
-        <div class="top"><code>${rn.id.slice(0,8)}</code>
-          <span class="pill p-${rn.status}">${rn.status}</span></div>
-        <small>${rn.graph} · ${rn.origin_channel}${rn.awaiting_input?(' · gate '+(rn.awaiting_input.gate||'')):''}</small>
-      </div>`).join("") || '<div class="empty" style="padding:16px">No runs yet.</div>';
-  }catch(e){ document.getElementById("runs").innerHTML =
-    '<div class="empty" style="padding:16px">'+e+'</div>'; }
+    box.replaceChildren();
+    if(!runs.length){ setEmpty(box, "No runs yet."); return; }
+    for(const rn of runs){
+      const card = el("div", "run" + (rn.id===current ? " sel" : ""));
+      const top = el("div", "top");
+      top.append(el("code", null, rn.id.slice(0,8)),
+                 el("span", "pill p-" + rn.status, rn.status));
+      const gate = rn.awaiting_input ? " · gate " + (rn.awaiting_input.gate||"") : "";
+      card.append(top, el("small", null, `${rn.graph} · ${rn.origin_channel}${gate}`));
+      card.addEventListener("click", () => watch(rn.id, rn.origin_channel||""));
+      box.append(card);
+    }
+  }catch(e){ setEmpty(box, String(e)); }
 }
 
 const OP = {
@@ -137,50 +154,57 @@ const OP = {
   run_recovered_as_interrupted:["RECOVER","op-run"], ping:["·","op-run"],
 };
 
+function describe(ev){
+  const p = ev.payload || {};
+  const t = ev.event_type;
+  if(t==="memory_op") return `${p.op||""} ${p.type||""} — ${p.summary||""}`;
+  if(t==="notification_sent"||t==="result_delivered") return `→ ${p.channel||""} ${p.message||""}`;
+  if(t==="gate_raised"||t==="awaiting_human")
+    return `gate ${p.gate||""} · ${p.kind||""} — awaiting approval in ${p.channel||"channel"}`;
+  if(t.startsWith("heal")) return JSON.stringify(p).slice(0,180);
+  if(p.delta) return Object.entries(p.delta).map(([k,v])=>`${k}=${v}`).join(" · ").slice(0,180);
+  if(p.error) return String(p.error);
+  return "";
+}
+
 function addEvent(ev){
   if(ev.event_type==="ping") return;
   const box = document.getElementById("events");
-  if(box.querySelector(".empty")) box.innerHTML = "";
+  if(box.querySelector(".empty")) box.replaceChildren();
   counts[ev.event_type] = (counts[ev.event_type]||0)+1;
-  renderKpis(ev);
+  renderKpis();
   const [label,cls] = OP[ev.event_type] || [ev.event_type.toUpperCase().slice(0,6),"op-node"];
   const t = (ev.at||"").slice(11,19) || new Date().toLocaleTimeString();
-  const p = ev.payload || {};
-  let desc = ev.node ? `<b>${ev.node}</b> ` : "";
-  if(ev.event_type==="memory_op") desc += `${p.op||""} ${p.type||""} — ${p.summary||""}`;
-  else if(ev.event_type==="notification_sent"||ev.event_type==="result_delivered")
-    desc += `→ ${p.channel||""} ${p.message||""}`;
-  else if(ev.event_type==="gate_raised"||ev.event_type==="awaiting_human")
-    desc += `gate ${p.gate||""} · ${p.kind||""} — awaiting approval in ${p.channel||"channel"}`;
-  else if(ev.event_type.startsWith("heal")) desc += JSON.stringify(p).slice(0,180);
-  else if(p.delta) desc += Object.entries(p.delta).map(([k,v])=>`${k}=${v}`).join(" · ").slice(0,180);
-  else if(p.error) desc += p.error;
-  const row = document.createElement("div");
-  row.className = "ev";
-  row.innerHTML = `<time>${t}</time><span class="op ${cls}">${label}</span><span class="body">${desc||ev.event_type}</span>`;
-  box.appendChild(row);
+  const row = el("div", "ev");
+  const body = el("span", "body");
+  if(ev.node){ body.append(el("b", null, ev.node), document.createTextNode(" ")); }
+  body.append(document.createTextNode(describe(ev) || ev.event_type));  // textContent — inert
+  row.append(el("time", null, t), el("span", "op " + cls, label), body);
+  box.append(row);
   box.scrollTop = box.scrollHeight;
   document.getElementById("seqLabel").textContent = "seq " + (ev.seq||"");
 }
 
-function renderKpis(ev){
-  const el = document.getElementById("kpis");
-  const nodes = counts.node_finished||0, mem = counts.memory_op||0,
-        gates = (counts.gate_raised||0), notif=(counts.notification_sent||0)+(counts.result_delivered||0),
-        heal=(counts.heal_result||0);
-  el.innerHTML = [["Nodes",nodes],["Memory ops",mem],["Gates",gates],
-    ["Notifications",notif],["Self-heals",heal]].map(([k,v])=>
-    `<div class="kpi"><small>${k}</small><b>${v}</b></div>`).join("");
+function renderKpis(){
+  const el2 = document.getElementById("kpis");
+  const rows = [["Nodes",counts.node_finished||0],["Memory ops",counts.memory_op||0],
+    ["Gates",counts.gate_raised||0],
+    ["Notifications",(counts.notification_sent||0)+(counts.result_delivered||0)],
+    ["Self-heals",counts.heal_result||0]];
+  el2.replaceChildren(...rows.map(([k,v])=>{
+    const c = el("div","kpi"); c.append(el("small",null,k), el("b",null,String(v))); return c;
+  }));
 }
 
 function watch(id, channel){
-  current = id; lastSeq = 0; counts = {};
-  document.querySelectorAll(".run").forEach(r=>r.classList.remove("sel"));
-  event && event.currentTarget && event.currentTarget.classList.add("sel");
+  current = id; counts = {};
   loadRuns();
-  document.getElementById("title").innerHTML = `Run <code style="font:600 15px var(--mono)">${id.slice(0,8)}</code> <span style="color:var(--ink2);font-size:13px">· ${channel}</span>`;
-  document.getElementById("events").innerHTML = "";
-  document.getElementById("kpis").innerHTML = "";
+  const title = document.getElementById("title");
+  title.replaceChildren(document.createTextNode("Run "),
+    el("code", null, id.slice(0,8)),
+    el("span", null, " · " + channel));
+  document.getElementById("events").replaceChildren();
+  document.getElementById("kpis").replaceChildren();
   if(ws){ ws.close(); ws=null; }
   const proto = location.protocol==="https:"?"wss":"ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/runs/${id}?api_key=${encodeURIComponent(KEY)}&from_seq=0`);
