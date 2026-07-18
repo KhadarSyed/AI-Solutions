@@ -119,3 +119,27 @@ def test_provider_override_per_stage(monkeypatch):
 
 def test_palette_is_accessible_on_dark():
     assert all(c.startswith("#") and len(c) == 7 for c in PALETTE)
+
+
+def test_renderer_escapes_untrusted_content():
+    schema = _schema()
+    schema["title"] = '<script>alert(1)</script>'
+    schema["summaries"]["executive"] = ['<img src=x onerror=alert(2)>']
+    schema["kpis"] = [{"label": "<b>bad</b>", "value": '"><svg onload=alert(3)>'}]
+    schema["logos"]["brand"]["name"] = '"><script>alert(4)</script>'
+    schema["banner"]["video_url"] = "javascript:alert(5)"
+    html = render(schema)
+    assert "<script>alert(1)" not in html
+    assert "onerror=alert(2)" not in html
+    assert "<svg onload" not in html
+    assert "javascript:alert(5)" not in html          # non-http scheme dropped
+    assert "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_renderer_rejects_non_image_logo_datauri():
+    schema = _schema()
+    schema["logos"]["brand"] = {"name": "Evil", "kind": "image",
+                                "data_uri": "data:text/html,<script>alert(6)</script>"}
+    html = render(schema)
+    assert "data:text/html" not in html               # falls back to monogram
+    assert 'class="logo mono"' in html

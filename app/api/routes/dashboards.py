@@ -4,7 +4,7 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -49,11 +49,16 @@ async def _generate(session_id: str, db: AsyncSession, *, theme: str | None = No
 @router.get("/{session_id}", response_class=HTMLResponse)
 async def get_dashboard(
     session_id: uuid.UUID, db: DB,
-    api_key: str | None = Query(None),
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    api_key: str | None = Query(
+        None,
+        description="Browser-navigation fallback only — prefer the X-API-Key header; "
+        "query-string keys can leak via logs and referrers.",
+    ),
     theme: str | None = Query(None, pattern="^(dark|light)$"),
     regenerate: bool = False,
 ) -> HTMLResponse:
-    ok, reason = verify_api_key(api_key)
+    ok, reason = verify_api_key(x_api_key or api_key)
     if not ok:
         raise HTTPException(401, reason)
     store = get_artifact_store()
@@ -87,8 +92,7 @@ async def dashboard_feedback(session_id: uuid.UUID, body: FeedbackBody, db: DB) 
             content=f"Dashboard feedback: {body.message}",
         )
     await _generate(str(session_id), db, feedback=body.message)
-    return {"status": "regenerated",
-            "dashboard_url": f"/dashboards/{session_id}?api_key=<key>"}
+    return {"status": "regenerated", "dashboard_path": f"/dashboards/{session_id}"}
 
 
 @router.post("/{session_id}/like", dependencies=[Depends(require_admin)])

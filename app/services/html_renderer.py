@@ -5,10 +5,32 @@ ECharts + (when a geo chart exists) D3 + topojson + world atlas. Video banner is
 remote-streamed with a gradient fallback; everything else is embedded."""
 
 import json
+import re
 from functools import lru_cache
+from html import escape
 from pathlib import Path
+from urllib.parse import urlparse
 
 from app.config.settings import get_settings
+
+
+def _e(value) -> str:
+    """Escape untrusted text for HTML context — titles, summaries, names, KPI
+    values all originate from LLM output or the web."""
+    return escape(str(value), quote=True)
+
+
+def _safe_http_url(url: str) -> str:
+    """Only http(s) URLs survive into src attributes."""
+    try:
+        scheme = urlparse(url).scheme
+    except Exception:
+        return ""
+    return escape(url, quote=True) if scheme in ("http", "https") else ""
+
+
+def _safe_data_image(uri: str) -> str:
+    return escape(uri, quote=True) if str(uri).startswith("data:image/") else ""
 
 VENDOR = Path(__file__).resolve().parents[1] / "static" / "vendor"
 
@@ -127,13 +149,22 @@ def _script(name: str, embed: bool) -> str:
     return f'<script src="{CDN[name]}"></script>'
 
 
+_MONO_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
 def _logo_html(logo: dict, small: bool = False) -> str:
     cls = "logo small" if small else "logo"
+    name = _e(logo.get("name", ""))
     if logo.get("kind") == "image":
-        return (f'<span class="{cls}" title="{logo["name"]}">'
-                f'<img src="{logo["data_uri"]}" alt="{logo["name"]} logo"></span>')
-    return (f'<span class="{cls} mono" title="{logo["name"]}" '
-            f'style="background:{logo.get("color", "#2563eb")}">{logo.get("initials", "?")}</span>')
+        src = _safe_data_image(logo.get("data_uri", ""))
+        if src:
+            return (f'<span class="{cls}" title="{name}">'
+                    f'<img src="{src}" alt="{name} logo"></span>')
+    color = logo.get("color", "#2563eb")
+    if not _MONO_COLOR_RE.match(str(color)):
+        color = "#2563eb"
+    return (f'<span class="{cls} mono" title="{name}" '
+            f'style="background:{color}">{_e(logo.get("initials", "?"))}</span>')
 
 
 def render(schema: dict) -> str:
@@ -146,10 +177,11 @@ def render(schema: dict) -> str:
     tabs = schema.get("tabs", [])
     default_tab = tabs[0]["id"] if tabs else "overview"
 
-    # banner
+    # banner — only http(s) video URLs pass
     banner = schema.get("banner") or {}
-    video = (f'<video autoplay muted loop playsinline '
-             f'src="{banner["video_url"]}"></video>') if banner.get("video_url") else ""
+    video_src = _safe_http_url(banner.get("video_url", "")) if banner.get("video_url") else ""
+    video = (f'<video autoplay muted loop playsinline src="{video_src}"></video>'
+             if video_src else "")
     logos = schema.get("logos") or {}
     logo_strip = ""
     if logos:
@@ -159,10 +191,10 @@ def render(schema: dict) -> str:
         parts += [_logo_html(c, small=True) for c in logos.get("competitors", [])]
         logo_strip = f'<div class="logos">{"".join(parts)}</div>'
 
-    # tab nav + pages
+    # tab nav + pages (ids come from our fixed selector vocabulary; escape anyway)
     nav = "".join(
-        f'<button class="tab{" on" if t["id"] == default_tab else ""}" data-t="{t["id"]}">'
-        f'{t["label"]}</button>' for t in tabs
+        f'<button class="tab{" on" if t["id"] == default_tab else ""}" data-t="{_e(t["id"])}">'
+        f'{_e(t["label"])}</button>' for t in tabs
     )
     pages = []
     for t in tabs:
@@ -171,33 +203,33 @@ def render(schema: dict) -> str:
             body = (
                 '<div class="summary-container">'
                 '<div class="card"><h3>Executive Summary</h3><ul>'
-                + "".join(f"<li>{b}</li>" for b in s.get("executive", [])
-                          or ["<li>No summary generated.</li>"])
+                + "".join(f"<li>{_e(b)}</li>" for b in s.get("executive", [])
+                          or ["No summary generated."])
                 + '</ul></div><div class="card"><h3>Recommendations</h3><ul>'
-                + "".join(f"<li>{b}</li>" for b in s.get("recommendations", [])
-                          or ["<li>—</li>"])
+                + "".join(f"<li>{_e(b)}</li>" for b in s.get("recommendations", []) or ["—"])
                 + "</ul></div></div>"
             )
         else:
             cards = "".join(
-                f'<div class="card"><h3>{c["title"]}</h3>'
-                f'<div class="chart" id="chart-{c["id"]}"></div></div>'
+                f'<div class="card"><h3>{_e(c["title"])}</h3>'
+                f'<div class="chart" id="chart-{_e(c["id"])}"></div></div>'
                 for c in charts if c["tab"] == t["id"]
             )
             body = f'<div class="chart-grid">{cards}</div>'
         on = " on" if t["id"] == default_tab else ""
-        pages.append(f'<section class="page{on}" id="page-{t["id"]}">{body}</section>')
+        pages.append(f'<section class="page{on}" id="page-{_e(t["id"])}">{body}</section>')
 
     kpis = "".join(
-        f'<div class="kpi-card"><small>{k["label"]}</small><b>{k["value"]}</b>'
-        f'<div class="sub">{k.get("sub", "")}</div></div>'
+        f'<div class="kpi-card"><small>{_e(k["label"])}</small><b>{_e(k["value"])}</b>'
+        f'<div class="sub">{_e(k.get("sub", ""))}</div></div>'
         for k in schema.get("kpis", [])
     )
 
     echarts_specs = {c["id"]: c["option"] for c in charts if c["engine"] == "echarts"}
     geo_specs = {c["id"]: c["geo"] for c in charts if c["engine"] == "d3geo"}
+    # '<' escaped so untrusted strings inside chart data can't close the script tag
     chart_data = json.dumps({"echarts": echarts_specs, "geo": geo_specs},
-                            ensure_ascii=False).replace("</script", "<\\/script")
+                            ensure_ascii=False).replace("<", "\\u003c")
 
     init_js = f"""
 const DATA = {chart_data};
@@ -229,7 +261,7 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{schema.get("title", "Dashboard")}</title>
+<title>{_e(schema.get("title", "Dashboard"))}</title>
 <style>{THEMES.get(theme, THEMES["dark"])}{BASE_CSS}</style>
 </head>
 <body>
@@ -237,8 +269,8 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
   {video}
   {logo_strip}
   <div class="overlay">
-    <h1>{schema.get("title", "Executive Dashboard")}</h1>
-    <div class="meta">Generated {schema.get("generated_at", "")[:16].replace("T", " ")}
+    <h1>{_e(schema.get("title", "Executive Dashboard"))}</h1>
+    <div class="meta">Generated {_e(schema.get("generated_at", "")[:16].replace("T", " "))}
       · PR Intelligence Agent{" · template reused" if schema.get("template_reused") else ""}</div>
   </div>
 </header>
