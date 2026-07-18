@@ -60,7 +60,7 @@ async def enrich(state: PipelineState) -> dict:
     return {"enriched_count": stats["countries_resolved"], "notes": {"enrich": stats}}
 
 
-async def _export_gate_csv(session_id: str, gate: int) -> str:
+async def _export_gate_csv(session_id: str, gate: int) -> tuple[str, str]:
     store = get_artifact_store()
     if gate == 1:
         payload = await store.get_json(keys.source_file(session_id))
@@ -69,27 +69,28 @@ async def _export_gate_csv(session_id: str, gate: int) -> str:
         payload = await store.get_json(keys.tagged_file(session_id))
         data = articles_to_csv(payload.get("articles", []), TAGGED_COLUMNS)
     key = keys.gate_csv(session_id, gate)
-    await store.put_bytes(key, data, "text/csv")
-    return key
+    ref = await store.put_bytes(key, data, "text/csv")
+    return key, ref.sha256
 
 
-async def _notify_gate(state: PipelineState, gate: int, csv_key: str, message: str) -> None:
+async def _notify_gate(state: PipelineState, gate: int, csv_key: str, csv_sha: str,
+                       message: str) -> None:
     """Send the gate CSV to the run's origin channel (adapters land in Phase D;
     web-origin runs observe the awaiting_human event on /ws/runs)."""
     try:
         from app.channels.notifier import notify_gate
 
-        await notify_gate(state, gate=gate, csv_key=csv_key, message=message)
+        await notify_gate(state, gate=gate, csv_key=csv_key, csv_sha=csv_sha, message=message)
     except Exception as exc:
         log.info("gate.notify_skipped", gate=gate, reason=str(exc)[:120])
 
 
 async def gate1_consent(state: PipelineState) -> dict:
     session_id = state["session_id"]
-    csv_key = await _export_gate_csv(session_id, 1)
+    csv_key, csv_sha = await _export_gate_csv(session_id, 1)
     message = ("Collected articles are ready (CSV attached). "
                "Reply APPROVE to start enrichment & tagging, or CHANGES with instructions.")
-    await _notify_gate(state, 1, csv_key, message)
+    await _notify_gate(state, 1, csv_key, csv_sha, message)
     decision = interrupt({
         "gate": 1, "kind": "consent_to_enrich", "csv_key": csv_key,
         "channel": state.get("origin_channel"), "message": message,
@@ -111,11 +112,11 @@ async def tag(state: PipelineState) -> dict:
 
 async def gate2_approval(state: PipelineState) -> dict:
     session_id = state["session_id"]
-    csv_key = await _export_gate_csv(session_id, 2)
+    csv_key, csv_sha = await _export_gate_csv(session_id, 2)
     message = ("Tagged articles are ready for your approval (CSV attached). "
                "Reply APPROVE to build dashboards, or CHANGES with instructions. "
                "Detailed edits are available in the review console.")
-    await _notify_gate(state, 2, csv_key, message)
+    await _notify_gate(state, 2, csv_key, csv_sha, message)
     decision = interrupt({
         "gate": 2, "kind": "approve_tagged", "csv_key": csv_key,
         "channel": state.get("origin_channel"), "message": message,
