@@ -1,6 +1,13 @@
+import asyncio
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+
+# psycopg async (LangGraph checkpointer) cannot use Windows' ProactorEventLoop;
+# harmless no-op in the Linux container.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from app.api.routes.admin import router as admin_router
 from app.observability.logging import get_logger, setup_logging

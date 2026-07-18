@@ -1,0 +1,43 @@
+"""Skeleton pipeline graph: interrupt at both gates, resume on approval,
+durable state in the Postgres checkpointer."""
+
+import uuid
+
+from langgraph.types import Command
+
+from app.orchestration.checkpoint import checkpointer, setup_checkpointer_tables
+from app.orchestration.graphs.pipeline_graph import build_pipeline_graph
+
+
+async def test_gates_interrupt_and_resume_to_completion():
+    await setup_checkpointer_tables()
+    async with checkpointer() as saver:
+        graph = build_pipeline_graph(saver)
+        cfg = {"configurable": {"thread_id": f"test-{uuid.uuid4()}"}}
+        init = {"session_id": "s-test", "project_id": "p-test", "origin_channel": "web"}
+
+        result = await graph.ainvoke(init, cfg)
+        assert "__interrupt__" in result
+        assert result["__interrupt__"][0].value["gate"] == 1
+
+        result = await graph.ainvoke(Command(resume={"decision": "approved"}), cfg)
+        assert result["__interrupt__"][0].value["gate"] == 2
+
+        result = await graph.ainvoke(Command(resume={"decision": "approved"}), cfg)
+        assert "__interrupt__" not in result
+        assert result["gate1_decision"] == "approved"
+        assert result["gate2_decision"] == "approved"
+        assert result["notes"]["reflect"] == "stub"
+
+
+async def test_gate1_changes_loops_back_to_collect():
+    async with checkpointer() as saver:
+        graph = build_pipeline_graph(saver)
+        cfg = {"configurable": {"thread_id": f"test-{uuid.uuid4()}"}}
+        await graph.ainvoke({"session_id": "s", "project_id": "p"}, cfg)
+
+        # request changes → graph re-collects → interrupts at gate 1 again
+        result = await graph.ainvoke(
+            Command(resume={"decision": "changes", "feedback": "add competitor Carrier"}), cfg
+        )
+        assert result["__interrupt__"][0].value["gate"] == 1

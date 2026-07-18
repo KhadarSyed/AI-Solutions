@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "pipeline": "./app/orchestration/graphs/pipeline_graph.py:graph"
+  },
+  "env": ".env"
+}
