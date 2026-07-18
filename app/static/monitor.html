@@ -3,219 +3,357 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>PR Intelligence — Live Monitor</title>
+<title>PR Intelligence — Live Console</title>
 <style>
   :root{
     --field:#F4F5F7;--panel:#FFFFFF;--ink:#161B22;--ink2:#57606C;--hair:#E2E5EA;
-    --navy:#12386E;--navy2:#1E4E96;--navy-soft:#E8EEF7;--gold:#9B7C2D;
+    --navy:#12386E;--navy2:#1E4E96;--navy-soft:#E8EEF7;--gold:#9B7C2D;--gold-soft:#F5EEDC;
     --ok:#127A50;--ok-soft:#E2F1EA;--warn:#96660F;--warn-soft:#F8EFDC;--bad:#B3261E;
-    --heal:#6941C6;--heal-soft:#EFEAFB;--mono:Consolas,'Cascadia Code',monospace;
-    --sans:'Segoe UI',system-ui,sans-serif;
+    --heal:#6941C6;--heal-soft:#EFEAFB;--mono:Consolas,'Cascadia Code',monospace;--sans:'Segoe UI',system-ui,sans-serif;
   }
   *{box-sizing:border-box}
-  html{background:var(--field)}
-  body{margin:0;color:var(--ink);font:13.5px/1.5 var(--sans)}
-  .shell{display:grid;grid-template-columns:300px 1fr;min-height:100dvh}
-  @media(max-width:860px){.shell{grid-template-columns:1fr}}
+  html{background:var(--field)} body{margin:0;color:var(--ink);font:13.5px/1.5 var(--sans)}
+  .shell{display:grid;grid-template-columns:212px 1fr;min-height:100dvh}
+  @media(max-width:900px){.shell{grid-template-columns:1fr}.rail{display:none}}
   /* rail */
-  .rail{background:var(--panel);border-right:1px solid var(--hair);padding:16px;overflow-y:auto;max-height:100dvh}
-  .brand b{font-size:15px}
-  .brand small{display:block;color:var(--ink2);font:600 9.5px var(--mono);letter-spacing:.16em;text-transform:uppercase;margin-top:2px}
-  .keyrow{display:flex;gap:6px;margin:12px 0}
-  .keyrow input{flex:1;font:12px var(--mono);padding:7px 9px;border:1px solid var(--hair);border-radius:6px}
-  .keyrow button,.btn{font:600 12px var(--sans);border:1px solid var(--navy);background:var(--navy);color:#fff;border-radius:6px;padding:7px 11px;cursor:pointer}
-  .btn.ghost{background:#fff;color:var(--navy)}
-  h2{font:700 10.5px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ink2);margin:16px 0 8px}
-  .run{padding:9px 10px;border:1px solid var(--hair);border-radius:8px;margin-bottom:7px;cursor:pointer}
-  .run:hover{background:#F8F9FB}
-  .run.sel{border-color:var(--navy);background:var(--navy-soft)}
-  .run .top{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  .rail{background:var(--panel);border-right:1px solid var(--hair);padding:16px 0;overflow-y:auto;max-height:100dvh}
+  .brand{padding:0 16px 14px;border-bottom:1px solid var(--hair)}
+  .brand b{font-size:15px} .brand small{display:block;color:var(--ink2);font:600 9px var(--mono);letter-spacing:.16em;text-transform:uppercase;margin-top:2px}
+  .keyrow{padding:12px 16px;display:flex;gap:6px}
+  .keyrow input{flex:1;min-width:0;font:11px var(--mono);padding:6px 8px;border:1px solid var(--hair);border-radius:6px}
+  .keyrow button{font:600 11px var(--sans);border:0;background:var(--navy);color:#fff;border-radius:6px;padding:6px 10px;cursor:pointer}
+  .rlabel{font:700 9.5px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--ink2);padding:8px 16px 4px}
+  .runs{padding:0 10px}
+  .run{padding:8px 10px;border:1px solid var(--hair);border-radius:8px;margin-bottom:6px;cursor:pointer}
+  .run:hover{background:#F8F9FB} .run.sel{border-color:var(--navy);background:var(--navy-soft)}
+  .run .rtop{display:flex;justify-content:space-between;align-items:center;gap:6px}
   .run code{font:11px var(--mono);color:var(--ink2)}
-  .pill{font:700 9px var(--mono);letter-spacing:.05em;padding:2px 7px;border-radius:999px;white-space:nowrap}
-  .p-running{background:var(--navy-soft);color:var(--navy)}
-  .p-awaiting_human{background:var(--warn-soft);color:var(--warn)}
-  .p-completed{background:var(--ok-soft);color:var(--ok)}
-  .p-failed{background:#F9E7E5;color:var(--bad)}
+  .run small{display:block;color:var(--ink2);font-size:10.5px;margin-top:2px}
+  .pill{font:700 8.5px var(--mono);padding:2px 6px;border-radius:999px;white-space:nowrap}
+  .p-running{background:var(--navy-soft);color:var(--navy)} .p-awaiting_human{background:var(--warn-soft);color:var(--warn)}
+  .p-completed{background:var(--ok-soft);color:var(--ok)} .p-failed{background:#F9E7E5;color:var(--bad)}
   .p-paused,.p-interrupted,.p-cancelled{background:#EEE;color:var(--ink2)}
-  .run small{display:block;color:var(--ink2);font-size:11px;margin-top:3px}
   /* main */
-  .main{padding:18px 22px;min-width:0}
-  .hd{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
-  .hd h1{font:650 20px var(--sans);margin:0}
-  .conn{font:700 10px var(--mono);letter-spacing:.08em;padding:5px 10px;border-radius:999px}
-  .conn.live{background:var(--ok-soft);color:var(--ok)}
-  .conn.off{background:#EEE;color:var(--ink2)}
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--hair);border:1px solid var(--hair);border-radius:6px;overflow:hidden;margin-bottom:12px}
-  .kpi{background:var(--panel);padding:10px 12px}
-  .kpi small{font:600 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);display:block}
-  .kpi b{font:650 18px var(--sans);font-variant-numeric:tabular-nums}
-  .stream{background:var(--panel);border:1px solid var(--hair);border-radius:8px;max-height:64vh;overflow-y:auto}
-  .stream>header{position:sticky;top:0;background:var(--panel);border-bottom:1px solid var(--hair);padding:10px 14px;font:700 12px var(--sans);display:flex;justify-content:space-between}
-  .ev{display:grid;grid-template-columns:74px 96px 1fr;gap:10px;padding:7px 14px;border-bottom:1px solid #F0F1F4;font-size:12.5px;animation:in .25s ease-out}
-  @keyframes in{from{opacity:0;transform:translateY(-3px)}to{opacity:1}}
-  .ev time{font:600 11px var(--mono);color:var(--ink2)}
-  .op{font:700 9px var(--mono);letter-spacing:.05em;border-radius:3px;padding:3px 6px;height:fit-content;text-align:center;white-space:nowrap}
-  .op-node{background:var(--navy-soft);color:var(--navy)}
-  .op-gate{background:var(--warn-soft);color:var(--warn)}
-  .op-mem{background:var(--ok-soft);color:var(--ok)}
-  .op-heal{background:var(--heal-soft);color:var(--heal)}
-  .op-notif{background:#FCEFD8;color:var(--gold)}
-  .op-run{background:#EAECEF;color:var(--ink2)}
-  .op-fail{background:#F9E7E5;color:var(--bad)}
-  .ev .body{min-width:0;word-break:break-word}
-  .ev .body b{color:var(--navy)}
-  .empty{padding:40px;text-align:center;color:var(--ink2)}
-  .foot{margin-top:10px;color:var(--ink2);font:11px var(--mono)}
+  .main{min-width:0}
+  .band{background:linear-gradient(100deg,var(--navy),var(--navy2) 70%,#2E62B4);color:#F3F5FA;padding:20px 26px;position:relative}
+  .band .eyebrow{font:600 9.5px var(--mono);letter-spacing:.22em;text-transform:uppercase;color:#B9C9E6}
+  .band h1{font:600 23px/1.15 Georgia,serif;margin:6px 0 4px} .band p{margin:0;font-size:12.5px;color:#C9D5EA;max-width:70ch}
+  .band .conn{position:absolute;top:18px;right:24px;font:700 9.5px var(--mono);padding:5px 10px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff}
+  .band .conn.live{background:#1f8a5b}
+  .content{padding:16px 22px 60px}
+  .brief{background:var(--panel);border:1px solid var(--hair);border-top:3px solid var(--gold);border-radius:0 0 6px 6px;padding:14px 18px}
+  .brief h2{font:600 15px Georgia,serif;margin:0 0 6px} .brief p{margin:0;color:#333D4D;font-size:13px}
+  .gatechip{display:none;align-items:center;gap:8px;font:600 11.5px var(--sans);color:var(--warn);background:var(--warn-soft);border:1px solid #EBDCB8;border-radius:4px;padding:6px 11px;margin-top:8px}
+  .gatechip.on{display:inline-flex}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:1px;background:var(--hair);border:1px solid var(--hair);border-radius:6px;overflow:hidden;margin-top:14px}
+  .kpi{background:var(--panel);padding:10px 13px} .kpi small{font:600 9px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--ink2);display:block} .kpi b{font:650 19px var(--sans);font-variant-numeric:tabular-nums}
+  .panel{background:var(--panel);border:1px solid var(--hair);border-radius:6px;margin-top:14px}
+  .panel>header{display:flex;justify-content:space-between;align-items:center;padding:10px 15px;border-bottom:1px solid var(--hair)}
+  .panel>header h3{font:700 12px var(--sans);margin:0} .panel .cnt{font:600 10px var(--mono);color:var(--ink2)}
+  .panel .body{padding:12px 15px}
+  .cols{display:grid;grid-template-columns:1.5fr 1fr;gap:14px} @media(max-width:1050px){.cols{grid-template-columns:1fr}}
+  /* topology */
+  .topo{overflow-x:auto} .topo svg{min-width:820px;width:100%;height:120px;display:block}
+  .nd{stroke-width:1.5} .nd-done{fill:var(--ok-soft);stroke:var(--ok)} .nd-run{fill:var(--navy-soft);stroke:var(--navy2)}
+  .nd-wait{fill:var(--warn-soft);stroke:var(--warn)} .nd-idle{fill:#F3F5F7;stroke:#AEB9C2}
+  .nlab{font:700 9.5px var(--mono);fill:var(--ink)} .nsub{font:600 8px var(--mono);fill:var(--ink2)}
+  .edge{stroke:#BCC7D4;stroke-width:1.5;fill:none} .edge.on{stroke:var(--navy2);stroke-dasharray:5 4}
+  /* stream */
+  .stream{max-height:340px;overflow-y:auto}
+  .ev{display:grid;grid-template-columns:66px 88px 1fr;gap:9px;padding:6px 0;border-bottom:1px solid #F0F1F4;font-size:12px;animation:in .2s}
+  @keyframes in{from{opacity:0}to{opacity:1}} .ev time{font:600 10.5px var(--mono);color:var(--ink2)}
+  .op{font:700 8.5px var(--mono);border-radius:3px;padding:3px 5px;height:fit-content;text-align:center}
+  .op-node{background:var(--navy-soft);color:var(--navy)} .op-gate{background:var(--warn-soft);color:var(--warn)} .op-mem{background:var(--ok-soft);color:var(--ok)}
+  .op-heal{background:var(--heal-soft);color:var(--heal)} .op-notif{background:#FCEFD8;color:var(--gold)} .op-run{background:#EAECEF;color:var(--ink2)} .op-fail{background:#F9E7E5;color:var(--bad)}
+  .ev .b b{color:var(--navy)}
+  table{width:100%;border-collapse:collapse;font-size:11.5px} th{text-align:left;font:700 9px var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink2);border-bottom:2px solid var(--ink);padding:6px 7px}
+  td{border-bottom:1px solid #F0F1F4;padding:6px 7px;vertical-align:top} .aid{font:700 10.5px var(--mono);color:var(--navy);white-space:nowrap}
+  .mv{font:700 9px var(--mono);border-radius:3px;padding:2px 5px} .mv-STORE{background:var(--ok-soft);color:var(--ok)} .mv-RECALL{background:var(--navy-soft);color:var(--navy)}
+  .tbl-wrap{max-height:280px;overflow:auto}
+  .mx{font:10px var(--mono)} .mx th,.mx td{text-align:center;padding:4px 3px} .mx td:first-child,.mx th:first-child{text-align:left}
+  .mx .c0{color:#C3CBD3} .mx .cv{background:var(--navy-soft);color:var(--navy);border-radius:2px;font-weight:700}
+  .inc{border:1px solid var(--hair);border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px}
+  .empty{padding:30px;text-align:center;color:var(--ink2)}
+  .foot{margin-top:12px;color:var(--ink2);font:11px var(--mono)}
+  .gatebox{border-left:4px solid var(--warn);background:var(--warn-soft);border-radius:0 6px 6px 0;padding:10px 12px;font-size:12px}
+  .gatebox b{font-size:13px} .gatebox .loc{display:inline-block;font:600 10px var(--mono);background:#fff;border:1px solid #EBDCB8;border-radius:4px;padding:3px 8px;margin:6px 6px 0 0}
 </style>
 </head>
 <body>
 <div class="shell">
   <aside class="rail">
-    <div class="brand"><b>PR Intelligence</b><small>Live Monitor</small></div>
-    <div class="keyrow">
-      <input id="key" type="password" placeholder="X-API-Key" autocomplete="off">
-      <button onclick="saveKey()">Save</button>
-    </div>
-    <div style="display:flex;gap:6px">
-      <button class="btn ghost" style="flex:1" onclick="loadRuns()">↻ Refresh runs</button>
-    </div>
-    <h2>Runs <span id="runCount" style="color:var(--ink2)"></span></h2>
-    <div id="runs"></div>
+    <div class="brand"><b>PR Intelligence</b><small>Live Console</small></div>
+    <div class="keyrow"><input id="key" type="password" placeholder="X-API-Key" autocomplete="off"><button onclick="saveKey()">Save</button></div>
+    <div class="rlabel">Runs <span id="runCount"></span></div>
+    <div class="runs" id="runs"><div class="empty" style="padding:14px">Enter your API key.</div></div>
   </aside>
-
   <main class="main">
-    <div class="hd">
-      <h1 id="title">Select a run to watch its live stream</h1>
-      <span id="conn" class="conn off">DISCONNECTED</span>
+    <header class="band">
+      <span id="conn" class="conn">DISCONNECTED</span>
+      <div class="eyebrow" id="eyebrow">PR Intelligence · Live Console</div>
+      <h1 id="title">Select a run to watch it live</h1>
+      <p id="subtitle">Every stage, memory operation, gate, and self-heal streams here in real time.</p>
+    </header>
+    <div class="content">
+      <section class="brief">
+        <h2>Where the run stands</h2>
+        <p id="stands">Pick a run from the left rail. Its pipeline, memory ledger, self-healing, and traces populate as events arrive.</p>
+        <span class="gatechip" id="gatechip"></span>
+      </section>
+
+      <div class="kpis" id="kpis"></div>
+
+      <section class="panel topo">
+        <header><h3>Pipeline topology</h3><span class="cnt" id="topoState">idle</span></header>
+        <div class="body" style="overflow-x:auto"><svg id="topo" viewBox="0 0 820 110" role="img" aria-label="pipeline"></svg></div>
+      </section>
+
+      <div class="cols">
+        <section class="panel">
+          <header><h3>Event stream</h3><span class="cnt" id="seqLabel"></span></header>
+          <div class="body stream" id="events"><div class="empty">Live events appear here.</div></div>
+        </section>
+        <div>
+          <section class="panel" id="gatePanel" style="display:none">
+            <header><h3>Human gate</h3><span class="cnt">view-only</span></header>
+            <div class="body"><div class="gatebox" id="gatebox"></div></div>
+          </section>
+          <section class="panel">
+            <header><h3>Self-healing</h3><span class="cnt" id="healCnt">0</span></header>
+            <div class="body" id="heal"><div class="empty" style="padding:14px">No incidents.</div></div>
+          </section>
+        </div>
+      </div>
+
+      <div class="cols">
+        <section class="panel">
+          <header><h3>Memory ledger</h3><span class="cnt" id="memCnt">0 ops</span></header>
+          <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Agent</th><th>Op</th><th>Type</th><th>Summary</th></tr></thead><tbody id="ledger"></tbody></table></div>
+        </section>
+        <section class="panel">
+          <header><h3>Memory matrix — agent × type</h3><span class="cnt">S/R</span></header>
+          <div class="body" style="overflow-x:auto"><table class="mx"><thead id="mxHead"></thead><tbody id="mxBody"></tbody></table></div>
+        </section>
+      </div>
+
+      <section class="panel">
+        <header><h3>Traces — recent LLM calls</h3><span class="cnt" id="traceCnt"></span></header>
+        <div class="tbl-wrap"><table><thead><tr><th>Time</th><th>Stage</th><th>Purpose</th><th>Model</th><th>Tokens</th><th>ms</th><th>$</th></tr></thead><tbody id="traces"></tbody></table></div>
+      </section>
+
+      <div class="foot">Streaming from <code>/ws/runs/{run_id}</code> · Meridian hybrid console (banner · where-it-stands · Atlas topology · memory matrix · self-heal · traces)</div>
     </div>
-    <div class="kpis" id="kpis"></div>
-    <section class="stream">
-      <header><span>Event stream</span><span id="seqLabel" style="color:var(--ink2);font-weight:400"></span></header>
-      <div id="events"><div class="empty">Pick a run on the left. Events (node transitions,
-        memory ops, gates, notifications, self-heal) appear here in real time as they happen.</div></div>
-    </section>
-    <div class="foot">Streaming from <code>/ws/runs/{run_id}</code> · replay + live · Meridian design</div>
   </main>
 </div>
-
 <script>
-// XSS-safe: every value from the API is inserted via textContent / DOM nodes,
-// never via innerHTML string interpolation (event payloads carry LLM output and
-// email-derived text). Key lives in sessionStorage (cleared on tab close), not
-// localStorage, so an injected script can't read a long-lived credential.
-const API = location.origin;
-let KEY = sessionStorage.getItem("prsol_key") || "";
-let ws = null, current = null, counts = {};
+const API=location.origin;
+let KEY=sessionStorage.getItem("prsol_key")||"";
+let ws=null,current=null,S={};
+document.getElementById("key").value=KEY;
+function saveKey(){KEY=document.getElementById("key").value.trim();sessionStorage.setItem("prsol_key",KEY);loadRuns();}
+function hdr(){return {"X-API-Key":KEY};}
+function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e;}
+function empty(n,m){n.replaceChildren(el("div","empty",m));}
 
-document.getElementById("key").value = KEY;
-function saveKey(){ KEY = document.getElementById("key").value.trim();
-  sessionStorage.setItem("prsol_key", KEY); loadRuns(); }
-function hdr(){ return {"X-API-Key": KEY}; }
-
-function el(tag, cls, text){
-  const e = document.createElement(tag);
-  if(cls) e.className = cls;
-  if(text != null) e.textContent = text;
-  return e;
-}
-function setEmpty(container, msg){
-  container.replaceChildren(el("div", "empty", msg));
-}
+const STAGES=[["query","QUERY","query"],["collect","COLLECT","collect"],["enrich","ENRICH","enrich"],
+  ["gate1","GATE 1","gate1_consent"],["tag","TAG","tag"],["gate2","GATE 2","gate2_approval"],
+  ["dashboards","BOARDS","dashboards"]];
 
 async function loadRuns(){
-  const box = document.getElementById("runs");
-  if(!KEY){ setEmpty(box, "Enter your API key above."); return; }
+  const box=document.getElementById("runs");
+  if(!KEY){empty(box,"Enter your API key.");return;}
   try{
-    const r = await fetch(API + "/runs?limit=40", {headers: hdr()});
-    if(!r.ok){ setEmpty(box, "HTTP " + r.status + " — check the key."); return; }
-    const {runs} = await r.json();
-    document.getElementById("runCount").textContent = "· " + runs.length;
+    const r=await fetch(API+"/runs?limit=40",{headers:hdr()});
+    if(!r.ok){empty(box,"HTTP "+r.status+" — check key");return;}
+    const {runs}=await r.json();
+    document.getElementById("runCount").textContent="· "+runs.length;
     box.replaceChildren();
-    if(!runs.length){ setEmpty(box, "No runs yet."); return; }
+    if(!runs.length){empty(box,"No runs yet.");return;}
     for(const rn of runs){
-      const card = el("div", "run" + (rn.id===current ? " sel" : ""));
-      const top = el("div", "top");
-      top.append(el("code", null, rn.id.slice(0,8)),
-                 el("span", "pill p-" + rn.status, rn.status));
-      const gate = rn.awaiting_input ? " · gate " + (rn.awaiting_input.gate||"") : "";
-      card.append(top, el("small", null, `${rn.graph} · ${rn.origin_channel}${gate}`));
-      card.addEventListener("click", () => watch(rn.id, rn.origin_channel||""));
+      const card=el("div","run"+(rn.id===current?" sel":""));
+      const top=el("div","rtop");top.append(el("code",null,rn.id.slice(0,8)),el("span","pill p-"+rn.status,rn.status));
+      const g=rn.awaiting_input?" · gate "+(rn.awaiting_input.gate||""):"";
+      card.append(top,el("small",null,rn.origin_channel+g));
+      card.addEventListener("click",()=>watch(rn));
       box.append(card);
     }
-  }catch(e){ setEmpty(box, String(e)); }
+  }catch(e){empty(box,String(e));}
 }
 
-const OP = {
-  run_started:["RUN","op-run"], run_resumed:["RESUME","op-run"], run_completed:["DONE","op-run"],
-  run_failed:["FAILED","op-fail"], run_paused:["PAUSED","op-run"], run_cancelled:["CANCEL","op-run"],
-  node_finished:["NODE","op-node"], gate_raised:["GATE","op-gate"], awaiting_human:["GATE","op-gate"],
-  memory_op:["MEMORY","op-mem"], notification_sent:["NOTIFY","op-notif"], result_delivered:["DELIVER","op-notif"],
-  heal_started:["HEAL","op-heal"], heal_source:["HEAL","op-heal"], heal_result:["HEAL","op-heal"],
-  run_recovered_as_interrupted:["RECOVER","op-run"], ping:["·","op-run"],
-};
+const OP={run_started:["RUN","op-run"],run_resumed:["RESUME","op-run"],run_completed:["DONE","op-run"],
+  run_failed:["FAILED","op-fail"],node_finished:["NODE","op-node"],gate_raised:["GATE","op-gate"],
+  awaiting_human:["GATE","op-gate"],memory_op:["MEMORY","op-mem"],notification_sent:["NOTIFY","op-notif"],
+  result_delivered:["DELIVER","op-notif"],progress:["STAGE","op-node"],heal_started:["HEAL","op-heal"],
+  heal_source:["HEAL","op-heal"],heal_result:["HEAL","op-heal"]};
 
-function describe(ev){
-  const p = ev.payload || {};
-  const t = ev.event_type;
-  if(t==="memory_op") return `${p.op||""} ${p.type||""} — ${p.summary||""}`;
-  if(t==="notification_sent"||t==="result_delivered") return `→ ${p.channel||""} ${p.message||""}`;
-  if(t==="gate_raised"||t==="awaiting_human")
-    return `gate ${p.gate||""} · ${p.kind||""} — awaiting approval in ${p.channel||"channel"}`;
-  if(t.startsWith("heal")) return JSON.stringify(p).slice(0,180);
-  if(p.delta) return Object.entries(p.delta).map(([k,v])=>`${k}=${v}`).join(" · ").slice(0,180);
-  if(p.error) return String(p.error);
-  return "";
+function resetState(){S={stage:{},mem:[],matrix:{},heal:{},counts:{},lastNode:null};}
+
+function watch(rn){
+  current=rn.id;resetState();loadRuns();
+  document.getElementById("eyebrow").textContent="PR Intelligence · "+rn.origin_channel+" · run "+rn.id.slice(0,8);
+  document.getElementById("title").textContent=(rn.awaiting_input?"Awaiting approval":"Run")+" — "+rn.status;
+  document.getElementById("events").replaceChildren();
+  document.getElementById("ledger").replaceChildren();
+  document.getElementById("heal").replaceChildren();
+  drawTopo();renderKpis();renderMatrix();
+  document.getElementById("gatePanel").style.display="none";
+  document.getElementById("gatechip").className="gatechip";
+  loadTraces();
+  if(ws){ws.close();ws=null;}
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/ws/runs/${rn.id}?api_key=${encodeURIComponent(KEY)}&from_seq=0`);
+  const c=document.getElementById("conn");
+  ws.onopen=()=>{c.className="conn live";c.textContent="● LIVE";};
+  ws.onclose=()=>{c.className="conn";c.textContent="DISCONNECTED";};
+  ws.onmessage=e=>{try{onEvent(JSON.parse(e.data));}catch(_){}};
 }
 
-function addEvent(ev){
-  if(ev.event_type==="ping") return;
-  const box = document.getElementById("events");
-  if(box.querySelector(".empty")) box.replaceChildren();
-  counts[ev.event_type] = (counts[ev.event_type]||0)+1;
+function onEvent(ev){
+  if(ev.event_type==="ping")return;
+  S.counts[ev.event_type]=(S.counts[ev.event_type]||0)+1;
+  addRow(ev); applyTopo(ev); applyMem(ev); applyHeal(ev); applyGate(ev); applyStands(ev);
   renderKpis();
-  const [label,cls] = OP[ev.event_type] || [ev.event_type.toUpperCase().slice(0,6),"op-node"];
-  const t = (ev.at||"").slice(11,19) || new Date().toLocaleTimeString();
-  const row = el("div", "ev");
-  const body = el("span", "body");
-  if(ev.node){ body.append(el("b", null, ev.node), document.createTextNode(" ")); }
-  body.append(document.createTextNode(describe(ev) || ev.event_type));  // textContent — inert
-  row.append(el("time", null, t), el("span", "op " + cls, label), body);
-  box.append(row);
-  box.scrollTop = box.scrollHeight;
-  document.getElementById("seqLabel").textContent = "seq " + (ev.seq||"");
+  document.getElementById("seqLabel").textContent="seq "+(ev.seq||"");
+}
+
+function addRow(ev){
+  const box=document.getElementById("events");if(box.querySelector(".empty"))box.replaceChildren();
+  const [label,cls]=OP[ev.event_type]||[ev.event_type.slice(0,6).toUpperCase(),"op-node"];
+  const t=(ev.at||"").slice(11,19)||new Date().toLocaleTimeString();const p=ev.payload||{};
+  let d="";
+  if(ev.event_type==="memory_op")d=`${p.op||""} ${p.type||""} — ${p.summary||""}`;
+  else if(ev.event_type==="progress")d=p.message||"";
+  else if(ev.event_type==="notification_sent"||ev.event_type==="result_delivered")d=`→ ${p.channel||""} ${p.message||""}`;
+  else if(ev.event_type==="gate_raised"||ev.event_type==="awaiting_human")d=`gate ${p.gate||""} · ${p.kind||""}`;
+  else if(ev.event_type.startsWith("heal"))d=JSON.stringify(p).slice(0,160);
+  else if(p.delta)d=Object.entries(p.delta).map(([k,v])=>k+"="+v).join(" · ").slice(0,160);
+  const row=el("div","ev");const b=el("span","b");
+  if(ev.node){b.append(el("b",null,ev.node),document.createTextNode(" "));}
+  b.append(document.createTextNode(d||ev.event_type));
+  row.append(el("time",null,t),el("span","op "+cls,label),b);
+  box.append(row);box.scrollTop=box.scrollHeight;
+}
+
+function applyTopo(ev){
+  const map={collect:"collect",enrich:"enrich",gate1_consent:"gate1",tag:"tag",gate2_approval:"gate2",dashboards:"dashboards"};
+  if(ev.event_type==="node_finished"&&map[ev.node]){S.stage[map[ev.node]]="done";S.stage.query="done";}
+  if(ev.event_type==="progress"){ // "Searching…"→collect running, "Tagging…"→tag running
+    const m=(ev.payload||{}).message||"";
+    if(/search/i.test(m))S.stage.collect="run"; else if(/resolv/i.test(m))S.stage.enrich="run";
+    else if(/tagging/i.test(m))S.stage.tag="run"; else if(/dashboard/i.test(m))S.stage.dashboards="run";
+  }
+  if(ev.event_type==="awaiting_human"){const g=(ev.payload||{}).gate;S.stage[g===2?"gate2":"gate1"]="wait";}
+  if(ev.event_type==="run_completed"){for(const [k]of STAGES)if(S.stage[k]!=="wait")S.stage[k]="done";}
+  drawTopo();
+}
+function drawTopo(){
+  const svg=document.getElementById("topo");svg.replaceChildren();const NS="http://www.w3.org/2000/svg";
+  const w=104,gap=12,y=34,h=40;
+  STAGES.forEach((st,i)=>{
+    const x=10+i*(w+gap);
+    if(i>0){const e=document.createElementNS(NS,"path");e.setAttribute("d",`M${x-gap} ${y+h/2} H${x}`);
+      e.setAttribute("class","edge"+(S.stage[st[0]]?" on":""));svg.append(e);}
+    const state=S.stage[st[0]]||"idle";
+    const cls={done:"nd-done",run:"nd-run",wait:"nd-wait",idle:"nd-idle"}[state];
+    const r=document.createElementNS(NS,"rect");r.setAttribute("x",x);r.setAttribute("y",y);
+    r.setAttribute("width",w);r.setAttribute("height",h);r.setAttribute("rx",5);r.setAttribute("class","nd "+cls);svg.append(r);
+    const lab=document.createElementNS(NS,"text");lab.setAttribute("x",x+w/2);lab.setAttribute("y",y+18);
+    lab.setAttribute("text-anchor","middle");lab.setAttribute("class","nlab");lab.textContent=st[1];svg.append(lab);
+    const sub=document.createElementNS(NS,"text");sub.setAttribute("x",x+w/2);sub.setAttribute("y",y+31);
+    sub.setAttribute("text-anchor","middle");sub.setAttribute("class","nsub");
+    sub.textContent={done:"done",run:"running",wait:"awaiting",idle:"—"}[state];svg.append(sub);
+  });
+  const running=Object.entries(S.stage).find(([,v])=>v==="run"||v==="wait");
+  document.getElementById("topoState").textContent=running?running[0]+" "+running[1]:"—";
+}
+
+function applyMem(ev){
+  if(ev.event_type!=="memory_op")return;const p=ev.payload||{};
+  const agent=ev.node||"?",op=p.op||"",type=(p.type||"").toUpperCase();
+  S.mem.unshift({t:(ev.at||"").slice(11,19),agent,op,type,summary:p.summary||""});
+  S.matrix[agent]=S.matrix[agent]||{};S.matrix[agent][type]=S.matrix[agent][type]||{S:0,R:0};
+  if(op==="STORE")S.matrix[agent][type].S++;else if(op==="RECALL")S.matrix[agent][type].R++;
+  const tb=document.getElementById("ledger");tb.replaceChildren();
+  for(const m of S.mem.slice(0,40)){const tr=el("tr");
+    tr.append(el("td",null,m.t),el("td","aid",m.agent));
+    const opc=el("td");opc.append(el("span","mv mv-"+m.op,m.op));tr.append(opc);
+    tr.append(el("td",null,m.type),el("td",null,m.summary));tb.append(tr);}
+  document.getElementById("memCnt").textContent=S.mem.length+" ops";
+  renderMatrix();
+}
+const MTYPES=["EPISODIC","SEMANTIC","ASSOCIATIVE","PROCEDURAL","PROFILE","FEEDBACK","RESEARCH","RAG"];
+function renderMatrix(){
+  const head=document.getElementById("mxHead"),body=document.getElementById("mxBody");
+  head.replaceChildren();const hr=el("tr");hr.append(el("th",null,"AGENT"));
+  MTYPES.forEach(t=>hr.append(el("th",null,t.slice(0,4))));head.append(hr);
+  body.replaceChildren();
+  const agents=Object.keys(S.matrix);
+  if(!agents.length){const tr=el("tr");const td=el("td",null,"—");td.colSpan=9;tr.append(td);body.append(tr);return;}
+  for(const a of agents){const tr=el("tr");tr.append(el("td","aid",a));
+    for(const t of MTYPES){const cell=S.matrix[a][t];
+      if(cell&&(cell.S||cell.R)){const parts=[];if(cell.S)parts.push("S"+cell.S);if(cell.R)parts.push("R"+cell.R);
+        tr.append(el("td","cv",parts.join("·")));}else tr.append(el("td","c0","·"));}
+    body.append(tr);}
+}
+
+function applyHeal(ev){
+  if(!ev.event_type.startsWith("heal"))return;const p=ev.payload||{};const id=p.agent||p.signature||"inc";
+  S.heal[id]=S.heal[id]||{steps:[]};S.heal[id].steps.push(ev.event_type.replace("heal_","")+": "+JSON.stringify(p).slice(0,80));
+  if(ev.event_type==="heal_result")S.heal[id].done=p.healed;
+  const box=document.getElementById("heal");box.replaceChildren();
+  const keys=Object.keys(S.heal);document.getElementById("healCnt").textContent=keys.length;
+  if(!keys.length){empty(box,"No incidents.");return;}
+  for(const k of keys){const d=el("div","inc");d.append(el("b",null,k+(S.heal[k].done?" · HEALED":" · healing…")));
+    S.heal[k].steps.forEach(s=>d.append(el("div",null,s)));box.append(d);}
+}
+
+function applyGate(ev){
+  if(ev.event_type==="awaiting_human"){const p=ev.payload||{};
+    document.getElementById("gatePanel").style.display="block";
+    const gb=document.getElementById("gatebox");gb.replaceChildren();
+    gb.append(el("b",null,`Gate ${p.gate||""} — awaiting approval`));
+    gb.append(el("div",null,p.message||p.kind||""));
+    const loc=el("div");loc.append(el("span","loc","channel: "+(p.channel||"")),el("span","loc","csv: "+((p.csv_key||"").split("/").pop())));
+    gb.append(loc);
+    const chip=document.getElementById("gatechip");chip.className="gatechip on";chip.textContent=`⏸ Gate ${p.gate} · awaiting approval in ${p.channel||"channel"}`;
+  }
+  if(ev.event_type==="run_resumed"||ev.event_type==="run_completed"){
+    document.getElementById("gatechip").className="gatechip";
+  }
+}
+
+function applyStands(ev){
+  const p=ev.payload||{};const s=document.getElementById("stands");
+  if(ev.event_type==="run_started")s.textContent="Run started — the collector fleet is gathering coverage.";
+  else if(ev.event_type==="progress"&&p.message)s.textContent=p.message;
+  else if(ev.event_type==="awaiting_human")s.textContent=`Paused at Gate ${p.gate} — the CSV was delivered to ${p.channel}; the run resumes when approval arrives there.`;
+  else if(ev.event_type==="run_completed")s.textContent="Analysis complete — dashboards and the branded report are ready.";
+  else if(ev.event_type==="run_failed")s.textContent="Run failed: "+(p.error||"");
+  if(ev.event_type!=="ping"){document.getElementById("title").textContent=
+    ({run_started:"Running",run_resumed:"Running",awaiting_human:"Awaiting approval",run_completed:"Completed",run_failed:"Failed"}[ev.event_type])||document.getElementById("title").textContent;}
 }
 
 function renderKpis(){
-  const el2 = document.getElementById("kpis");
-  const rows = [["Nodes",counts.node_finished||0],["Memory ops",counts.memory_op||0],
-    ["Gates",counts.gate_raised||0],
-    ["Notifications",(counts.notification_sent||0)+(counts.result_delivered||0)],
-    ["Self-heals",counts.heal_result||0]];
-  el2.replaceChildren(...rows.map(([k,v])=>{
-    const c = el("div","kpi"); c.append(el("small",null,k), el("b",null,String(v))); return c;
-  }));
+  const c=S.counts;const rows=[["Events",Object.values(c).reduce((a,b)=>a+b,0)],
+    ["Nodes",c.node_finished||0],["Memory ops",c.memory_op||0],["Gates",c.gate_raised||0],
+    ["Notifications",(c.notification_sent||0)+(c.result_delivered||0)],["Self-heals",c.heal_result||0]];
+  document.getElementById("kpis").replaceChildren(...rows.map(([k,v])=>{const d=el("div","kpi");d.append(el("small",null,k),el("b",null,String(v)));return d;}));
 }
 
-function watch(id, channel){
-  current = id; counts = {};
-  loadRuns();
-  const title = document.getElementById("title");
-  title.replaceChildren(document.createTextNode("Run "),
-    el("code", null, id.slice(0,8)),
-    el("span", null, " · " + channel));
-  document.getElementById("events").replaceChildren();
-  document.getElementById("kpis").replaceChildren();
-  if(ws){ ws.close(); ws=null; }
-  const proto = location.protocol==="https:"?"wss":"ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws/runs/${id}?api_key=${encodeURIComponent(KEY)}&from_seq=0`);
-  const conn = document.getElementById("conn");
-  ws.onopen = ()=>{ conn.className="conn live"; conn.textContent="● LIVE"; };
-  ws.onclose = ()=>{ conn.className="conn off"; conn.textContent="DISCONNECTED"; };
-  ws.onmessage = e=>{ try{ addEvent(JSON.parse(e.data)); }catch(_){} };
+async function loadTraces(){
+  try{const r=await fetch(API+"/admin/llm-calls?limit=15",{headers:hdr()});if(!r.ok)return;
+    const {calls,total_cost_usd,total_tokens}=await r.json();
+    document.getElementById("traceCnt").textContent=`$${(total_cost_usd||0).toFixed(4)} · ${total_tokens||0} tok`;
+    const tb=document.getElementById("traces");tb.replaceChildren();
+    for(const c of calls){const tr=el("tr");
+      tr.append(el("td",null,(c.at||"").slice(11,19)),el("td",null,c.stage||""),el("td",null,c.purpose||""),
+        el("td",null,c.model||""),el("td",null,(c.in_tokens||0)+"/"+(c.out_tokens||0)),
+        el("td",null,String(c.latency_ms||"")),el("td",null,(c.cost_usd||0).toFixed(4)));tb.append(tr);}
+  }catch(_){}
 }
 
-if(KEY) loadRuns();
-setInterval(()=>{ if(KEY && !current) loadRuns(); }, 5000);
+if(KEY)loadRuns();
+setInterval(()=>{if(KEY&&!current)loadRuns();},5000);
 </script>
 </body>
 </html>
