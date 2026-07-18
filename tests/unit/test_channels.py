@@ -35,3 +35,17 @@ def test_channel_dataclasses():
 def test_inbound_intent_model():
     i = InboundIntent(kind="gate_decision", gate_decision="approved")
     assert i.kind == "gate_decision" and i.gate_decision == "approved"
+
+
+def test_resume_token_binds_to_run_and_resists_spoof():
+    from app.security.auth import resume_token, token_in_text
+
+    rid = "3d864ea4-9bd3-4d5e-8c9e-c22f85f4c818"
+    token = resume_token(rid)
+    assert token.startswith("RT-") and len(token) == 19
+    # a reply quoting the original notification carries the token
+    assert token_in_text(rid, f"Approved. {token}")
+    # a forged token or one from another run does not verify
+    assert not token_in_text(rid, "Approved. RT-0000000000000000")
+    assert not token_in_text(rid, "Approved, go ahead")
+    assert not token_in_text("different-run-id", f"Approved. {token}")

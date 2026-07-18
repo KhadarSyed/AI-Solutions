@@ -86,10 +86,14 @@ async def _notify_gate(state: PipelineState, gate: int, csv_key: str, csv_sha: s
 
 
 async def gate1_consent(state: PipelineState) -> dict:
+    from app.security.auth import resume_token
+
     session_id = state["session_id"]
     csv_key, csv_sha = await _export_gate_csv(session_id, 1)
+    token = resume_token(state.get("run_id", ""))
     message = ("Collected articles are ready (CSV attached). "
-               "Reply APPROVE to start enrichment & tagging, or CHANGES with instructions.")
+               "Reply APPROVE to start enrichment & tagging, or CHANGES with instructions. "
+               f"Please keep this reference in your reply: {token}")
     await _notify_gate(state, 1, csv_key, csv_sha, message)
     decision = interrupt({
         "gate": 1, "kind": "consent_to_enrich", "csv_key": csv_key,
@@ -111,11 +115,15 @@ async def tag(state: PipelineState) -> dict:
 
 
 async def gate2_approval(state: PipelineState) -> dict:
+    from app.security.auth import resume_token
+
     session_id = state["session_id"]
     csv_key, csv_sha = await _export_gate_csv(session_id, 2)
+    token = resume_token(state.get("run_id", ""))
     message = ("Tagged articles are ready for your approval (CSV attached). "
                "Reply APPROVE to build dashboards, or CHANGES with instructions. "
-               "Detailed edits are available in the review console.")
+               "Detailed edits are available in the review console. "
+               f"Please keep this reference in your reply: {token}")
     await _notify_gate(state, 2, csv_key, csv_sha, message)
     decision = interrupt({
         "gate": 2, "kind": "approve_tagged", "csv_key": csv_key,

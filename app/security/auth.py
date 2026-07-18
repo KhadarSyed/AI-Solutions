@@ -1,11 +1,32 @@
 """API-key auth — Layer 9. The admin key is env-seeded; user keys land with Stage 1."""
 
+import hashlib
 import hmac
+import re
 from typing import Annotated
 
 from fastapi import Header, HTTPException, status
 
 from app.config.settings import get_settings
+
+_TOKEN_RE = re.compile(r"\bRT-([0-9a-f]{16})\b")
+
+
+def resume_token(run_id: str) -> str:
+    """Per-run HMAC token embedded in gate notifications. A channel reply must
+    carry it to resume the run — this survives sender spoofing because only a
+    recipient of the original gate message has the token."""
+    key = get_settings().admin_api_key.encode()
+    digest = hmac.new(key, f"gate-resume:{run_id}".encode(), hashlib.sha256).hexdigest()[:16]
+    return f"RT-{digest}"
+
+
+def token_in_text(run_id: str, text: str) -> bool:
+    expected = resume_token(run_id)
+    for found in _TOKEN_RE.findall(text or ""):
+        if hmac.compare_digest(f"RT-{found}", expected):
+            return True
+    return False
 
 
 def verify_api_key(candidate: str | None) -> tuple[bool, str]:

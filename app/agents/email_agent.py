@@ -40,16 +40,18 @@ async def _adapter_for(channel: str):
     return EmailAdapter()
 
 
-async def _match_project(inbound: ChannelInbound) -> Project | None:
+async def _match_project(inbound: ChannelInbound) -> tuple[Project | None, bool]:
+    """Returns (project, sender_verified). sender_verified is True only when the
+    inbound sender is a registered stakeholder — the sole basis for any
+    state-mutating action. Brand-name-in-subject is NOT authorization (the From
+    field is spoofable); no single-project fail-open."""
     async with get_sessionmaker()() as db:
         projects = (await db.execute(select(Project))).scalars().all()
+    sender = inbound.sender.lower()
     for p in projects:
-        emails = [e.lower() for e in (p.stakeholder_emails or [])]
-        if inbound.sender.lower() in emails:
-            return p
-        if p.brand_name and p.brand_name.lower() in (inbound.subject + inbound.text).lower():
-            return p
-    return projects[0] if len(projects) == 1 else None
+        if sender and sender in [e.lower() for e in (p.stakeholder_emails or [])]:
+            return p, True
+    return None, False
 
 
 async def _pending_gate_run(project_id: str) -> Run | None:
@@ -115,10 +117,11 @@ async def _answer_query(project_id: str, run: Run | None, inbound: ChannelInboun
 
 
 async def handle_inbound(inbound: ChannelInbound) -> dict:
-    project = await _match_project(inbound)
-    if project is None:
-        log.info("inbound.unmatched", sender=inbound.sender)
-        return {"handled": False, "reason": "no matching project"}
+    # Unverified senders are never authoritative — the From field is spoofable.
+    project, sender_verified = await _match_project(inbound)
+    if project is None or not sender_verified:
+        log.info("inbound.unverified", sender=inbound.sender)
+        return {"handled": False, "reason": "sender is not a registered stakeholder"}
     project_id = str(project.id)
 
     run = await _pending_gate_run(project_id)
@@ -127,6 +130,21 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
 
     if intent.kind == "gate_decision" and run is not None:
         from app.orchestration.run_manager import get_run_manager
+        from app.security.auth import token_in_text
+
+        # A gate reply must carry the per-run token from the original notification.
+        thread_text = f"{inbound.subject}\n{inbound.text}"
+        if not token_in_text(str(run.id), thread_text):
+            log.warning("inbound.missing_resume_token", run_id=str(run.id),
+                        sender=inbound.sender)
+            with contextlib.suppress(Exception):
+                await adapter.send(inbound.address, OutboundMessage(
+                    subject=f"Re: {inbound.subject}",
+                    text=("I couldn't verify this reply against the pending review "
+                          "(missing the reference code from the original message). "
+                          "Please reply to that message so the reference is preserved."),
+                ))
+            return {"handled": False, "reason": "resume token missing/invalid"}
 
         decision = intent.gate_decision or "approved"
         await get_run_manager().resume(
