@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     max_concurrent_runs: int = 4
     run_event_retention_days: int = 30
 
+    # Self-healing
+    self_heal_enabled: bool = True
+    self_heal_browser: bool = False  # browser-assisted fix path (Phase C runtime)
+
     # Sandbox
     sandbox_backend: Literal["docker", "e2b"] = "docker"
     sandbox_container: str = "prsol-sandbox"
