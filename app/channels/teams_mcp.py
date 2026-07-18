@@ -1,0 +1,105 @@
+"""Teams + Graph mail via the user's production teams-mcp server (MCP client).
+
+Reuses the deployed toolset: chat_message_send / channel_message_reply /
+mail_reply for delivery, subscribe_to_mentions + get_pending_mentions for
+inbound. Enabled only when TEAMS_MCP_URL is set (needs a durable OAuth token on
+the server — see the plan's risks). Tool names are resolved dynamically so the
+adapter tolerates server-side renames."""
+
+import contextlib
+from collections.abc import AsyncIterator
+
+from app.channels.base import ChannelAdapter, ChannelInbound, OutboundMessage
+from app.config.settings import get_settings
+from app.observability.logging import get_logger
+
+log = get_logger(__name__)
+
+
+class TeamsMcpAdapter(ChannelAdapter):
+    channel = "teams"
+
+    def enabled(self) -> bool:
+        return bool(get_settings().teams_mcp_url)
+
+    async def _session(self):
+        from mcp import ClientSession
+        from mcp.client.streamable_http import streamablehttp_client
+
+        url = get_settings().teams_mcp_url
+        return streamablehttp_client(url), ClientSession
+
+    async def _call(self, tool: str, args: dict) -> dict:
+        transport, ClientSession = await self._session()
+        async with transport as (read, write, *_), ClientSession(read, write) as session:
+            await session.initialize()
+            result = await session.call_tool(tool, args)
+            out = {}
+            for item in result.content:
+                text = getattr(item, "text", None)
+                if text:
+                    out.setdefault("text", "")
+                    out["text"] += text
+            return out
+
+    async def send(self, address: dict, message: OutboundMessage) -> None:
+        """address: {kind: teams_chat|teams_channel|email, chat_id|team_id/channel_id|to,
+        message_id?}. Attachments upload to OneDrive first, then link in the message."""
+        kind = address.get("kind", "teams_chat")
+        text = message.text
+        links = await self._upload_attachments(message.attachments)
+        if links:
+            text += "\n\nAttachments:\n" + "\n".join(f"- {n}: {u}" for n, u in links)
+
+        if kind == "teams_channel":
+            await self._call("channel_message_reply", {
+                "team_id": address["team_id"], "channel_id": address["channel_id"],
+                "message_id": address.get("message_id"), "content": text,
+            })
+        elif kind == "email":
+            await self._call("mail_reply", {
+                "message_id": address.get("message_id"), "comment": text,
+            })
+        else:
+            await self._call("chat_message_send", {
+                "chat_id": address["chat_id"], "content": text,
+            })
+        log.info("teams.sent", kind=kind)
+
+    async def _upload_attachments(self, attachments) -> list[tuple[str, str]]:
+        links: list[tuple[str, str]] = []
+        for name, data, _mime in attachments:
+            with contextlib.suppress(Exception):
+                import base64
+
+                res = await self._call("drive_item_upload", {
+                    "name": name, "content_base64": base64.b64encode(data).decode(),
+                })
+                url = res.get("text", "")
+                if url:
+                    links.append((name, url))
+        return links
+
+    async def poll_inbound(self) -> AsyncIterator[ChannelInbound]:
+        try:
+            res = await self._call("get_pending_mentions", {})
+        except Exception as exc:
+            log.info("teams.poll_failed", error=str(exc)[:150])
+            return
+        import json
+
+        with contextlib.suppress(Exception):
+            mentions = json.loads(res.get("text", "[]"))
+            for m in mentions if isinstance(mentions, list) else []:
+                ch = "teams_channel" if m.get("channel_id") else "teams_chat"
+                yield ChannelInbound(
+                    channel=ch, sender=m.get("from", ""), text=m.get("text", ""),
+                    thread_ref=m.get("id", ""), raw_id=m.get("id", ""),
+                    address={
+                        "kind": ch, "chat_id": m.get("chat_id"),
+                        "team_id": m.get("team_id"), "channel_id": m.get("channel_id"),
+                        "message_id": m.get("id"),
+                    },
+                )
+                with contextlib.suppress(Exception):
+                    await self._call("mark_mention_processed", {"id": m.get("id")})

@@ -13,7 +13,8 @@ from app.orchestration.events import get_event_bus
 from app.orchestration.run_manager import get_run_manager
 
 
-async def _wait_status(run_id: str, statuses: set[str], timeout: float = 20.0) -> str:
+async def _wait_status(run_id: str, statuses: set[str], timeout: float = 90.0) -> str:
+    # generous: the dashboards node runs the Dashboard Agent (logo lookups + LLM summaries)
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         async with get_sessionmaker()() as db:
