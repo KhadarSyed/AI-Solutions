@@ -8,9 +8,11 @@ from app.api.routes.admin import router as admin_router
 from app.api.routes.charts import router as charts_router
 from app.api.routes.dashboards import router as dashboards_router
 from app.api.routes.projects import router as projects_router
+from app.api.routes.report import router as report_router
 from app.api.routes.review import router as review_router
 from app.api.routes.runs import router as runs_router
 from app.api.routes.sessions import router as sessions_router
+from app.api.ws.data_agent import router as ws_agent_router
 from app.api.ws.query_builder import router as ws_qb_router
 from app.api.ws.runs_stream import router as ws_runs_router
 from app.observability.logging import get_logger, setup_logging
@@ -82,9 +84,11 @@ def create_app() -> FastAPI:
     app.include_router(review_router)
     app.include_router(charts_router)
     app.include_router(dashboards_router)
+    app.include_router(report_router)
     app.include_router(runs_router)
     app.include_router(ws_runs_router)
     app.include_router(ws_qb_router)
+    app.include_router(ws_agent_router)
     return app
 
 
