@@ -110,7 +110,11 @@ class GuardedAgent[T]:
             raise
 
         latency_ms = int((time.monotonic() - started) * 1000)
-        usage = result.usage()
+        # pydantic-ai made `usage` a property (RunUsage) in newer versions; older
+        # releases exposed it as a method — support both.
+        usage = result.usage
+        if callable(usage):
+            usage = usage()
         try:
             used_model = getattr(result, "response", None)
             fallback_used = bool(

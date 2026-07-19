@@ -136,34 +136,37 @@ class TeamsMcpAdapter(ChannelAdapter):
         log.info("teams.sent", kind=kind)
 
     async def _send_mail(self, address: dict, message: OutboundMessage) -> None:
-        """Send from the agent's real mailbox via Graph. Uses mail_send (supports
-        inline attachments and sends as the signed-in mailbox); falls back to a
-        threaded mail_reply only for attachment-free replies when we have a
-        message_id and no recipient to send to."""
+        """Send from the agent's real mailbox via Graph. When we have the
+        initiator's original message id we reply IN-THREAD (mail_reply) so the
+        whole exchange — collected CSV, tagged CSV, dashboard — stays in one
+        thread; only a cold, thread-less send uses mail_send."""
         import base64
 
-        to = address.get("to")
-        if not to and address.get("message_id") and not message.attachments:
-            await self._call("mail_reply", {
-                "message_id": address["message_id"], "comment": message.text,
-            })
-            log.info("teams.sent", kind="email", mode="reply")
-            return
-
-        args: dict = {
-            "to": to,
-            "subject": message.subject or "PR Intelligence Agent",
-            "body": message.text,
-            "contentType": "Text",
-        }
+        atts = None
         if message.attachments:
-            args["attachments"] = [
+            atts = [
                 {"name": name, "contentType": mime or "application/octet-stream",
                  "contentBytesBase64": base64.b64encode(data).decode()}
                 for name, data, mime in message.attachments
             ]
+
+        msg_id = address.get("message_id")
+        if msg_id:
+            args: dict = {"messageId": msg_id, "comment": message.text}
+            if atts:
+                args["attachments"] = atts
+            await self._call("mail_reply", args, read_timeout=120.0)
+            log.info("teams.sent", kind="email", mode="reply",
+                     attachments=len(message.attachments))
+            return
+
+        args = {"to": address.get("to"),
+                "subject": message.subject or "PR Intelligence Agent",
+                "body": message.text, "contentType": "Text"}
+        if atts:
+            args["attachments"] = atts
         await self._call("mail_send", args, read_timeout=120.0)
-        log.info("teams.sent", kind="email", mode="send", to=to,
+        log.info("teams.sent", kind="email", mode="send", to=address.get("to"),
                  attachments=len(message.attachments))
 
     async def _upload_attachments(self, attachments) -> list[tuple[str, str]]:

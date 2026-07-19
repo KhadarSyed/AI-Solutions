@@ -92,23 +92,54 @@ async def notify_progress(state: PipelineState, message: str) -> None:
 
 
 async def notify_complete(state: PipelineState) -> None:
-    """Deliver the finished analysis (branded report) to the origin channel."""
+    """Final stage — deliver the dashboard + tagged CSV + branded report to the
+    origin channel (same email thread), then invite follow-up questions."""
+    import contextlib
+
     channel = state.get("origin_channel", "web")
     brand = state.get("brand", "your brand")
     session_id = state.get("session_id", "")
-    message = (f"Your {brand} media analysis is complete — {state.get('approved_count', 0)} "
-               f"approved articles across {state.get('tagged_count', 0)} tagged. "
-               "The branded report is attached; dashboards are ready in the console.")
+    slug = brand.lower().replace(" ", "_")
+    message = (
+        f"Your {brand} media analysis is complete — {state.get('approved_count', 0)} "
+        f"approved articles across {state.get('tagged_count', 0)} tagged.\n\n"
+        "Attached:\n"
+        "• dashboard.html — the interactive dashboard (open in any browser)\n"
+        f"• {slug}_tagged_articles.csv — the full tagged dataset\n"
+        f"• {slug}_report.docx — the branded narrative report\n\n"
+        "Reply to this thread with any questions and I'll answer them from the "
+        "analyzed coverage."
+    )
     attachments: list[tuple[str, bytes, str]] = []
     if channel != "web":
-        import contextlib
+        from app.artifacts import keys
+        from app.artifacts.factory import get_artifact_store
 
+        store = get_artifact_store()
+
+        # the dashboard itself (self-contained HTML) — skip if too large to inline
+        with contextlib.suppress(Exception):
+            html = await store.get_bytes(f"reports/{session_id}/dashboard.html")
+            if len(html) <= 3_500_000:
+                attachments.append(("dashboard.html", html, "text/html"))
+            else:
+                log.info("notifier.dashboard_too_large", bytes=len(html))
+
+        # the tagged CSV (the "csv file" delivered alongside the dashboard)
+        with contextlib.suppress(Exception):
+            from app.channels.csv_export import TAGGED_COLUMNS, articles_to_csv
+
+            payload = await store.get_json(keys.tagged_file(session_id))
+            csv_bytes = articles_to_csv(payload.get("articles", []), TAGGED_COLUMNS)
+            attachments.append((f"{slug}_tagged_articles.csv", csv_bytes, "text/csv"))
+
+        # the branded report
         with contextlib.suppress(Exception):
             from app.agents.report_builder import build_report
 
             data = await build_report(session_id=session_id, brand=brand)
-            attachments = [(f"{brand.lower()}_report.docx", data,
-                            "application/vnd.openxmlformats-officedocument."
-                            "wordprocessingml.document")]
+            attachments.append((f"{slug}_report.docx", data,
+                                "application/vnd.openxmlformats-officedocument."
+                                "wordprocessingml.document"))
     await _deliver(state, "result_delivered", message, attachments,
                    subject=f"{brand} — media analysis complete")
