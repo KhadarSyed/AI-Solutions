@@ -83,7 +83,7 @@
 <div class="shell">
   <aside class="rail">
     <div class="brand"><b>PR Intelligence</b><small>Live Console</small></div>
-    <div class="keyrow"><input id="key" type="password" placeholder="X-API-Key" autocomplete="off"><button onclick="saveKey()">Save</button></div>
+    <div class="keyrow" id="keyrow"><input id="key" type="password" placeholder="X-API-Key" autocomplete="off"><button onclick="saveKey()">Save</button></div>
     <div class="rlabel">Runs <span id="runCount"></span></div>
     <div class="runs" id="runs"><div class="empty" style="padding:14px">Enter your API key.</div></div>
   </aside>
@@ -146,12 +146,22 @@
   </main>
 </div>
 <script>
+// Auth: the key is exchanged once for an httpOnly session cookie via /monitor/login.
+// After that the browser authenticates automatically — the key is never kept in
+// JS storage and never appears in the WebSocket URL.
 const API=location.origin;
-let KEY=sessionStorage.getItem("prsol_key")||"";
-let ws=null,current=null,S={};
-document.getElementById("key").value=KEY;
-function saveKey(){KEY=document.getElementById("key").value.trim();sessionStorage.setItem("prsol_key",KEY);loadRuns();}
-function hdr(){return {"X-API-Key":KEY};}
+let AUTHED=false, ws=null, current=null, S={};
+
+async function saveKey(){
+  const key=document.getElementById("key").value.trim();
+  if(!key) return;
+  const r=await fetch(API+"/monitor/login",{method:"POST",credentials:"same-origin",
+    headers:{"Content-Type":"application/json"},body:JSON.stringify({key})});
+  if(r.ok){AUTHED=true;document.getElementById("key").value="";document.getElementById("keyrow").style.display="none";loadRuns();}
+  else{const j=await r.json().catch(()=>({}));empty(document.getElementById("runs"),j.reason||"invalid key");}
+}
+async function logout(){await fetch(API+"/monitor/logout",{method:"POST",credentials:"same-origin"});location.reload();}
+function hdr(){return {};}  // auth via cookie
 function el(t,c,x){const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e;}
 function empty(n,m){n.replaceChildren(el("div","empty",m));}
 
@@ -161,10 +171,11 @@ const STAGES=[["query","QUERY","query"],["collect","COLLECT","collect"],["enrich
 
 async function loadRuns(){
   const box=document.getElementById("runs");
-  if(!KEY){empty(box,"Enter your API key.");return;}
+  if(!AUTHED){empty(box,"Enter your API key.");return;}
   try{
-    const r=await fetch(API+"/runs?limit=40",{headers:hdr()});
-    if(!r.ok){empty(box,"HTTP "+r.status+" — check key");return;}
+    const r=await fetch(API+"/runs?limit=40",{credentials:"same-origin"});
+    if(r.status===401){AUTHED=false;document.getElementById("keyrow").style.display="flex";empty(box,"Session expired — enter key.");return;}
+    if(!r.ok){empty(box,"HTTP "+r.status);return;}
     const {runs}=await r.json();
     document.getElementById("runCount").textContent="· "+runs.length;
     box.replaceChildren();
@@ -201,7 +212,7 @@ function watch(rn){
   loadTraces();
   if(ws){ws.close();ws=null;}
   const proto=location.protocol==="https:"?"wss":"ws";
-  ws=new WebSocket(`${proto}://${location.host}/ws/runs/${rn.id}?api_key=${encodeURIComponent(KEY)}&from_seq=0`);
+  ws=new WebSocket(`${proto}://${location.host}/ws/runs/${rn.id}?from_seq=0`);  // auth via cookie
   const c=document.getElementById("conn");
   ws.onopen=()=>{c.className="conn live";c.textContent="● LIVE";};
   ws.onclose=()=>{c.className="conn";c.textContent="DISCONNECTED";};
@@ -341,7 +352,7 @@ function renderKpis(){
 }
 
 async function loadTraces(){
-  try{const r=await fetch(API+"/admin/llm-calls?limit=15",{headers:hdr()});if(!r.ok)return;
+  try{const r=await fetch(API+"/admin/llm-calls?limit=15",{credentials:"same-origin"});if(!r.ok)return;
     const {calls,total_cost_usd,total_tokens}=await r.json();
     document.getElementById("traceCnt").textContent=`$${(total_cost_usd||0).toFixed(4)} · ${total_tokens||0} tok`;
     const tb=document.getElementById("traces");tb.replaceChildren();
@@ -352,8 +363,15 @@ async function loadTraces(){
   }catch(_){}
 }
 
-if(KEY)loadRuns();
-setInterval(()=>{if(KEY&&!current)loadRuns();},5000);
+// on load: if the session cookie is still valid, skip the key prompt entirely
+(async()=>{
+  try{
+    const r=await fetch(API+"/monitor/session",{credentials:"same-origin"});
+    const j=await r.json();
+    if(j.authenticated){AUTHED=true;document.getElementById("keyrow").style.display="none";loadRuns();}
+  }catch(_){}
+})();
+setInterval(()=>{if(AUTHED&&!current)loadRuns();},5000);
 </script>
 </body>
 </html>

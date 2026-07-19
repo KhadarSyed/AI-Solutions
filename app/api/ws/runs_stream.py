@@ -22,8 +22,11 @@ async def run_stream(
     from_seq: int = Query(0),
     api_key: str | None = Query(None),
 ) -> None:
-    # browsers can't set headers on WebSocket connects — key travels as query param
-    ok, reason = verify_api_key(api_key)
+    # prefer the httpOnly session cookie (sent on same-origin WS handshake); the
+    # api_key query param stays as a fallback for non-browser clients
+    from app.security.auth import SESSION_COOKIE
+
+    ok, reason = verify_api_key(ws.cookies.get(SESSION_COOKIE) or api_key)
     if not ok:
         await ws.close(code=4403, reason=reason)
         return

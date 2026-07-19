@@ -5,9 +5,11 @@ import hmac
 import re
 from typing import Annotated
 
-from fastapi import Header, HTTPException, status
+from fastapi import Cookie, Header, HTTPException, status
 
 from app.config.settings import get_settings
+
+SESSION_COOKIE = "prsol_session"
 
 _TOKEN_RE = re.compile(r"\bRT-([0-9a-f]{16})\b")
 
@@ -43,8 +45,10 @@ def verify_api_key(candidate: str | None) -> tuple[bool, str]:
 
 async def require_admin(
     x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    prsol_session: Annotated[str | None, Cookie()] = None,
 ) -> None:
-    ok, reason = verify_api_key(x_api_key)
+    # header (API clients) or httpOnly session cookie (the browser console)
+    ok, reason = verify_api_key(x_api_key or prsol_session)
     if not ok:
         code = status.HTTP_401_UNAUTHORIZED if "required" in reason else status.HTTP_403_FORBIDDEN
         raise HTTPException(code, reason)
