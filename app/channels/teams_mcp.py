@@ -172,9 +172,16 @@ class TeamsMcpAdapter(ChannelAdapter):
             return
         import json
 
+        raw = res.get("text", "[]")
         with contextlib.suppress(Exception):
-            mentions = json.loads(res.get("text", "[]"))
-            for m in mentions if isinstance(mentions, list) else []:
+            data = json.loads(raw)
+            # server returns {"mentions": [...], "note": ...} OR a bare list
+            mentions = data.get("mentions", []) if isinstance(data, dict) else data
+            if not isinstance(mentions, list):
+                mentions = []
+            if mentions:
+                log.info("teams.poll", mentions=len(mentions), sample=str(raw)[:400])
+            for m in mentions:
                 ch = "teams_channel" if m.get("channel_id") else "teams_chat"
                 yield ChannelInbound(
                     channel=ch, sender=m.get("from", ""), text=m.get("text", ""),
