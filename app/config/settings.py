@@ -76,11 +76,22 @@ class Settings(BaseSettings):
     teams_mcp_url: str = ""
     teams_token_path: str = "data/local/teams_token.json"
     teams_auth_callback_port: int = 8765
+    # Real agent mailbox (the teams-mcp signed-in identity). Graph mail sends
+    # from here; the fake agent@prsol.local was only ever the greenmail fallback.
+    agent_email: str = "InfoVision.Agent1317@alphametricx.com"
+    # "graph" → send outbound email from the real mailbox via teams-mcp mail_send;
+    # "smtp" → local greenmail (offline tests). Graph is used only when teams-mcp
+    # is enabled; otherwise we fall back to SMTP regardless of this value.
+    email_delivery: str = "graph"
+    # Trigger phrases the mention subscription watches for (comma-separated),
+    # in addition to @Agent mentions.
+    mention_keywords: str = ("@Agent,BeOne,Trane,Otsuka,"
+                             "start monitoring,start beone,start trane,"
+                             "start otsuka,PR monitoring")
     smtp_host: str = "localhost"
     smtp_port: int = 3025
     imap_host: str = "localhost"
     imap_port: int = 3143
-    agent_email: str = "agent@prsol.local"
 
 
 @lru_cache

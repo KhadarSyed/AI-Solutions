@@ -16,15 +16,19 @@ from app.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-# Serialize all teams-mcp calls process-wide: the OAuth provider rotates the
-# refresh token on renewal, and concurrent renewals invalidate each other.
+# Serialize all teams-mcp calls process-wide: refresh rotates the refresh token,
+# and concurrent refreshes would invalidate each other. One shared token store.
 _TOKEN_LOCK = asyncio.Lock()
+_STORE = None
 
-# One OAuth provider per process. Creating a fresh provider per call re-reads the
-# token file every time and races on refresh-token rotation under frequent
-# polling; a single cached provider holds the token in memory and refreshes at
-# most once per access-token lifetime, so any poll cadence is safe.
-_PROVIDER = None
+
+def _store():
+    global _STORE
+    if _STORE is None:
+        from app.channels.teams_token_store import FileTokenStorage
+
+        _STORE = FileTokenStorage()
+    return _STORE
 
 
 def _unwrap(exc: BaseException) -> str:
@@ -33,6 +37,15 @@ def _unwrap(exc: BaseException) -> str:
     if subs:
         return " | ".join(_unwrap(e) for e in subs)
     return f"{type(exc).__name__}: {exc}"
+
+
+def _clean_text(text: str) -> str:
+    """Strip the corporate 'EXTERNAL EMAIL … Secured by Check Point' banner that
+    email gateways prepend, so intent/brand detection sees the actual message."""
+    import re
+
+    stripped = re.sub(r"(?is)^.*?secured by check point\b[\s:.-]*", "", text, count=1)
+    return stripped.strip() or text.strip()
 
 
 class TeamsMcpAdapter(ChannelAdapter):
@@ -46,41 +59,26 @@ class TeamsMcpAdapter(ChannelAdapter):
 
         return FileTokenStorage().has_credentials()
 
-    def _auth_provider(self):
-        global _PROVIDER
-        if _PROVIDER is not None:
-            return _PROVIDER
+    def _auth(self):
+        """A minimal bearer auth that injects the current access token. We keep
+        the token fresh out-of-band (see _ensure_fresh); no SDK OAuth flow, so
+        there is no interactive fallback to die on."""
+        import httpx
 
-        from mcp.client.auth import OAuthClientProvider
-        from mcp.shared.auth import OAuthClientMetadata
+        store = _store()
 
-        from app.channels.teams_token_store import FileTokenStorage
+        class _Bearer(httpx.Auth):
+            def auth_flow(self, request):
+                tok = store.access_token()
+                if tok:
+                    request.headers["Authorization"] = f"Bearer {tok}"
+                yield request
 
-        s = get_settings()
-        port = s.teams_auth_callback_port
+        return _Bearer()
 
-        async def _no_interactive(_url: str) -> None:
-            raise RuntimeError(
-                "teams-mcp token missing/expired — run `uv run python scripts/teams_auth.py`"
-            )
-
-        async def _no_callback() -> tuple[str, str | None]:
-            raise RuntimeError("teams-mcp requires interactive re-auth")
-
-        _PROVIDER = OAuthClientProvider(
-            server_url=s.teams_mcp_url,
-            client_metadata=OAuthClientMetadata(
-                client_name="PR Intelligence Agent",
-                redirect_uris=[f"http://localhost:{port}/callback"],
-                grant_types=["authorization_code", "refresh_token"],
-                response_types=["code"],
-                token_endpoint_auth_method="none",
-            ),
-            storage=FileTokenStorage(),
-            redirect_handler=_no_interactive,
-            callback_handler=_no_callback,
-        )
-        return _PROVIDER
+    async def refresh_token(self, force: bool = False) -> bool:
+        async with _TOKEN_LOCK:
+            return await _store().refresh(force=force)
 
     async def _call(self, tool: str, args: dict, read_timeout: float = 60.0) -> dict:
         from datetime import timedelta
@@ -88,10 +86,13 @@ class TeamsMcpAdapter(ChannelAdapter):
         from mcp import ClientSession
         from mcp.client.streamable_http import streamablehttp_client
 
+        # deterministic, serialized refresh right before use (no-op if still valid)
+        async with _TOKEN_LOCK:
+            await _store().refresh(force=False)
+
         url = get_settings().teams_mcp_url
-        async with _TOKEN_LOCK, \
-                streamablehttp_client(
-                    url, auth=self._auth_provider(),
+        async with streamablehttp_client(
+                    url, auth=self._auth(),
                     timeout=timedelta(seconds=read_timeout),
                     sse_read_timeout=timedelta(seconds=read_timeout),
                 ) as (read, write, *_), \
@@ -110,8 +111,14 @@ class TeamsMcpAdapter(ChannelAdapter):
 
     async def send(self, address: dict, message: OutboundMessage) -> None:
         """address: {kind: teams_chat|teams_channel|email, chat_id|team_id/channel_id|to,
-        message_id?}. Attachments upload to OneDrive first, then link in the message."""
+        message_id?}. Teams attachments upload to OneDrive then link; email
+        attachments (gate CSVs, report) go inline via Graph mail_send."""
         kind = address.get("kind", "teams_chat")
+
+        if kind == "email":
+            await self._send_mail(address, message)
+            return
+
         text = message.text
         links = await self._upload_attachments(message.attachments)
         if links:
@@ -122,15 +129,42 @@ class TeamsMcpAdapter(ChannelAdapter):
                 "team_id": address["team_id"], "channel_id": address["channel_id"],
                 "message_id": address.get("message_id"), "content": text,
             })
-        elif kind == "email":
-            await self._call("mail_reply", {
-                "message_id": address.get("message_id"), "comment": text,
-            })
         else:
             await self._call("chat_message_send", {
                 "chat_id": address["chat_id"], "content": text,
             })
         log.info("teams.sent", kind=kind)
+
+    async def _send_mail(self, address: dict, message: OutboundMessage) -> None:
+        """Send from the agent's real mailbox via Graph. Uses mail_send (supports
+        inline attachments and sends as the signed-in mailbox); falls back to a
+        threaded mail_reply only for attachment-free replies when we have a
+        message_id and no recipient to send to."""
+        import base64
+
+        to = address.get("to")
+        if not to and address.get("message_id") and not message.attachments:
+            await self._call("mail_reply", {
+                "message_id": address["message_id"], "comment": message.text,
+            })
+            log.info("teams.sent", kind="email", mode="reply")
+            return
+
+        args: dict = {
+            "to": to,
+            "subject": message.subject or "PR Intelligence Agent",
+            "body": message.text,
+            "contentType": "Text",
+        }
+        if message.attachments:
+            args["attachments"] = [
+                {"name": name, "contentType": mime or "application/octet-stream",
+                 "contentBytesBase64": base64.b64encode(data).decode()}
+                for name, data, mime in message.attachments
+            ]
+        await self._call("mail_send", args, read_timeout=120.0)
+        log.info("teams.sent", kind="email", mode="send", to=to,
+                 attachments=len(message.attachments))
 
     async def _upload_attachments(self, attachments) -> list[tuple[str, str]]:
         links: list[tuple[str, str]] = []
@@ -148,19 +182,44 @@ class TeamsMcpAdapter(ChannelAdapter):
 
     async def subscribe(self) -> bool:
         """Activate mention capture across chats, channels, and mail. Must run
-        before get_pending_mentions returns anything."""
+        before get_pending_mentions returns anything. NOTE: the tool parameter is
+        `sources` (not `resources`) and `match` sets the trigger keywords."""
+        keywords = [k.strip() for k in get_settings().mention_keywords.split(",")
+                    if k.strip()]
         try:
             # Render free tier: subscribe is slow; 60s default crashes it (needs ~180s)
             await self._call("subscribe_to_mentions",
-                             {"resources": ["teams_chats", "teams_channels", "email"]},
+                             {"sources": ["teams_chats", "teams_channels", "email"],
+                              "match": {"keywords": keywords}},
                              read_timeout=180.0)
-            log.info("teams.subscribed")
+            log.info("teams.subscribed", keywords=len(keywords))
             return True
         except Exception as exc:
             log.info("teams.subscribe_failed", error=_unwrap(exc)[:300])
             return False
 
+    async def bootstrap(self, resubscribe: bool = True) -> bool:
+        """Startup: mint a fresh access token, prove it works (identity check),
+        and (re)activate the mention subscription. Called at agent boot so
+        triggering by email or Teams works from the first tick, not lazily."""
+        if not await self.refresh_token(force=True):
+            log.warning("teams.bootstrap_no_token")
+            return False
+        try:
+            me = await self._call("me_get", {}, read_timeout=60.0)
+            log.info("teams.identity_ok", who=str(me.get("text", ""))[:200])
+        except Exception as exc:
+            log.warning("teams.identity_failed", error=_unwrap(exc)[:300])
+            return False
+        if not resubscribe:
+            return True
+        return await self.subscribe()
+
     async def renew(self) -> None:
+        # keep the access token alive (well before the 1 h expiry) and the
+        # Graph subscription active
+        with contextlib.suppress(Exception):
+            await self.refresh_token(force=True)
         with contextlib.suppress(Exception):
             await self._call("renew_subscriptions", {})
 
@@ -173,24 +232,53 @@ class TeamsMcpAdapter(ChannelAdapter):
         import json
 
         raw = res.get("text", "[]")
-        with contextlib.suppress(Exception):
+        try:
             data = json.loads(raw)
-            # server returns {"mentions": [...], "note": ...} OR a bare list
-            mentions = data.get("mentions", []) if isinstance(data, dict) else data
-            if not isinstance(mentions, list):
-                mentions = []
-            if mentions:
-                log.info("teams.poll", mentions=len(mentions), sample=str(raw)[:400])
-            for m in mentions:
-                ch = "teams_channel" if m.get("channel_id") else "teams_chat"
-                yield ChannelInbound(
-                    channel=ch, sender=m.get("from", ""), text=m.get("text", ""),
-                    thread_ref=m.get("id", ""), raw_id=m.get("id", ""),
-                    address={
-                        "kind": ch, "chat_id": m.get("chat_id"),
-                        "team_id": m.get("team_id"), "channel_id": m.get("channel_id"),
-                        "message_id": m.get("id"),
-                    },
-                )
-                with contextlib.suppress(Exception):
-                    await self._call("mark_mention_processed", {"id": m.get("id")})
+        except Exception:
+            return
+        # server returns a bare list OR {"mentions": [...], "note": ...}
+        mentions = data.get("mentions", []) if isinstance(data, dict) else data
+        if not isinstance(mentions, list):
+            mentions = []
+        if mentions:
+            log.info("teams.poll", mentions=len(mentions), sample=str(raw)[:300])
+        for m in mentions:
+            inbound = self._to_inbound(m)
+            if inbound is not None:
+                yield inbound
+            with contextlib.suppress(Exception):
+                # tool parameter is `mention_id` (not `id`)
+                await self._call("mark_mention_processed", {"mention_id": m.get("id")})
+
+    @staticmethod
+    def _to_inbound(m: dict) -> ChannelInbound | None:
+        """Map a teams-mcp mention (real schema: source_type / raw_text / task_text
+        / sender_email / message_id) onto a ChannelInbound. Email, chat, and
+        channel mentions have different shapes."""
+        mid = m.get("id") or m.get("message_id") or ""
+        text = _clean_text(m.get("raw_text") or m.get("task_text") or m.get("text", ""))
+        src = m.get("source_type") or (
+            "teams_channel" if m.get("channel_id") else "teams_chat")
+
+        if src == "email":
+            sender = m.get("sender_email") or m.get("from", "")
+            return ChannelInbound(
+                channel="email", sender=sender, text=text,
+                subject=m.get("subject", ""), thread_ref=mid, raw_id=mid,
+                address={"kind": "email", "to": sender,
+                         "message_id": m.get("message_id") or mid},
+            )
+        if src == "teams_channel":
+            return ChannelInbound(
+                channel="teams_channel", sender=m.get("sender_email") or m.get("from", ""),
+                text=text, thread_ref=mid, raw_id=mid,
+                address={"kind": "teams_channel", "team_id": m.get("team_id"),
+                         "channel_id": m.get("channel_id"),
+                         "message_id": m.get("message_id") or mid},
+            )
+        return ChannelInbound(
+            channel="teams_chat", sender=m.get("sender_email") or m.get("from", ""),
+            text=text, thread_ref=mid, raw_id=mid,
+            address={"kind": "teams_chat", "chat_id": m.get("chat_id"),
+                     "message_id": m.get("message_id") or mid},
+        )

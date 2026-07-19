@@ -21,16 +21,26 @@ def _adapters() -> list:
 
 
 def register_channel_adapters() -> None:
-    """Map each origin_channel value onto its delivering adapter."""
+    """Map each origin_channel value onto its delivering adapter.
+
+    When teams-mcp is enabled it also serves the `email` origin via Graph
+    mail_send from the agent's real mailbox — preferred over the greenmail SMTP
+    adapter, which stays only as the offline fallback."""
     from app.channels import notifier
 
-    for adapter in _adapters():
-        if adapter.channel == "email":
-            notifier.register_adapter("email", adapter)
-        else:  # one Teams adapter serves both chat and channel origins
-            notifier.register_adapter("teams_chat", adapter)
-            notifier.register_adapter("teams_channel", adapter)
-    log.info("channels.registered", adapters=[a.channel for a in _adapters()])
+    adapters = _adapters()
+    teams = next((a for a in adapters if a.channel == "teams"), None)
+    email = next((a for a in adapters if a.channel == "email"), None)
+
+    if teams is not None:
+        notifier.register_adapter("teams_chat", teams)
+        notifier.register_adapter("teams_channel", teams)
+        notifier.register_adapter("email", teams)   # real mailbox via Graph
+    elif email is not None:
+        notifier.register_adapter("email", email)   # greenmail fallback
+    log.info("channels.registered",
+             email="graph" if teams else ("smtp" if email else "none"),
+             teams=bool(teams))
 
 
 async def inbound_loop() -> None:
@@ -43,12 +53,20 @@ async def inbound_loop() -> None:
     interval = get_settings().inbound_poll_seconds
     r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
 
-    # Subscribe ONCE, then reuse the subscription forever. A Redis marker (kept
-    # alive by periodic renewals) survives restarts, so we only pay the slow
-    # subscribe on the very first boot or if the subscription actually lapses.
+    # At boot: mint/verify the token and (re)activate the subscription up front,
+    # so triggering by email or Teams works from the very first tick — not lazily
+    # on first use. A Redis marker (refreshed by the renew loop) lets us skip the
+    # slow re-subscribe across restarts; we still verify the token every boot.
     SUB_TTL = 3300  # 55 min; renew loop refreshes it well before expiry
     for adapter in adapters:
-        if hasattr(adapter, "subscribe"):
+        if hasattr(adapter, "bootstrap"):
+            has_sub = bool(await r.get(f"sub:active:{adapter.channel}"))
+            ok = await adapter.bootstrap(resubscribe=not has_sub)
+            if ok:
+                await r.set(f"sub:active:{adapter.channel}", "1", ex=SUB_TTL)
+                log.info("channels.bootstrapped", channel=adapter.channel,
+                         resubscribed=not has_sub)
+        elif hasattr(adapter, "subscribe"):
             if await r.get(f"sub:active:{adapter.channel}"):
                 log.info("channels.subscription_reused", channel=adapter.channel)
             elif await adapter.subscribe():

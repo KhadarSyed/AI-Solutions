@@ -45,6 +45,11 @@ async def _adapter_for(channel: str):
 
     if channel.startswith("teams"):
         return TeamsMcpAdapter()
+    # email: send from the real mailbox via Graph when teams-mcp is available;
+    # greenmail SMTP only as the offline fallback
+    teams = TeamsMcpAdapter()
+    if channel == "email" and teams.enabled():
+        return teams
     return EmailAdapter()
 
 
