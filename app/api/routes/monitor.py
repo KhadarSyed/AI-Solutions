@@ -8,11 +8,17 @@ JS storage or the WS URL). /monitor/logout clears it."""
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Response
+from fastapi import APIRouter, Cookie, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from app.security.auth import SESSION_COOKIE, verify_api_key
+from app.security.auth import (
+    SESSION_COOKIE,
+    create_session,
+    revoke_session,
+    valid_session,
+    verify_api_key,
+)
 
 router = APIRouter(tags=["monitor"])
 
@@ -32,21 +38,30 @@ class LoginBody(BaseModel):
     key: str
 
 
+def _is_https(request: Request) -> bool:
+    return (request.url.scheme == "https"
+            or request.headers.get("x-forwarded-proto", "").lower() == "https")
+
+
 @router.post("/monitor/login")
-async def login(body: LoginBody, response: Response) -> dict:
+async def login(body: LoginBody, request: Request, response: Response) -> dict:
     ok, reason = verify_api_key(body.key)
     if not ok:
         response.status_code = 401
         return {"ok": False, "reason": reason}
+    token = await create_session()               # random id in Redis; raw key not stored
     response.set_cookie(
-        SESSION_COOKIE, body.key,
-        max_age=COOKIE_MAX_AGE, httponly=True, samesite="strict", path="/",
+        SESSION_COOKIE, token,
+        max_age=COOKIE_MAX_AGE, httponly=True, secure=_is_https(request),
+        samesite="strict", path="/",
     )
     return {"ok": True}
 
 
 @router.post("/monitor/logout")
-async def logout(response: Response) -> dict:
+async def logout(response: Response,
+                 prsol_session: Annotated[str | None, Cookie()] = None) -> dict:
+    await revoke_session(prsol_session)
     response.delete_cookie(SESSION_COOKIE, path="/")
     return {"ok": True}
 
@@ -55,5 +70,4 @@ async def logout(response: Response) -> dict:
 async def session_status(
     prsol_session: Annotated[str | None, Cookie()] = None,
 ) -> dict:
-    ok, _ = verify_api_key(prsol_session)
-    return {"authenticated": ok}
+    return {"authenticated": await valid_session(prsol_session)}

@@ -15,6 +15,20 @@ log = get_logger(__name__)
 router = APIRouter()
 
 
+def _same_origin(ws: WebSocket) -> bool:
+    """Reject cross-site WebSocket handshakes (CSWSH): a malicious page must not
+    open an authenticated socket on the strength of the browser's cookie."""
+    origin = ws.headers.get("origin")
+    if origin is None:
+        return True  # non-browser client (no Origin header); relies on key auth
+    try:
+        from urllib.parse import urlparse
+
+        return urlparse(origin).netloc == ws.headers.get("host")
+    except Exception:
+        return False
+
+
 @router.websocket("/ws/runs/{run_id}")
 async def run_stream(
     ws: WebSocket,
@@ -22,13 +36,16 @@ async def run_stream(
     from_seq: int = Query(0),
     api_key: str | None = Query(None),
 ) -> None:
-    # prefer the httpOnly session cookie (sent on same-origin WS handshake); the
-    # api_key query param stays as a fallback for non-browser clients
-    from app.security.auth import SESSION_COOKIE
+    from app.security.auth import SESSION_COOKIE, valid_session
 
-    ok, reason = verify_api_key(ws.cookies.get(SESSION_COOKIE) or api_key)
-    if not ok:
-        await ws.close(code=4403, reason=reason)
+    if not _same_origin(ws):
+        await ws.close(code=4403, reason="cross-origin websocket rejected")
+        return
+    # cookie session (browser console) or api_key query (non-browser clients)
+    cookie_ok = await valid_session(ws.cookies.get(SESSION_COOKIE))
+    key_ok = verify_api_key(api_key)[0] if api_key else False
+    if not (cookie_ok or key_ok):
+        await ws.close(code=4403, reason="authentication required")
         return
     await ws.accept()
     bus = get_event_bus()
