@@ -40,13 +40,20 @@ async def inbound_loop() -> None:
         return
     from app.agents.email_agent import handle_inbound
 
-    # Teams needs an active mention subscription before polling returns anything.
-    for adapter in adapters:
-        if hasattr(adapter, "subscribe"):
-            await adapter.subscribe()
-
     interval = get_settings().inbound_poll_seconds
     r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+
+    # Subscribe ONCE, then reuse the subscription forever. A Redis marker (kept
+    # alive by periodic renewals) survives restarts, so we only pay the slow
+    # subscribe on the very first boot or if the subscription actually lapses.
+    SUB_TTL = 3300  # 55 min; renew loop refreshes it well before expiry
+    for adapter in adapters:
+        if hasattr(adapter, "subscribe"):
+            if await r.get(f"sub:active:{adapter.channel}"):
+                log.info("channels.subscription_reused", channel=adapter.channel)
+            elif await adapter.subscribe():
+                await r.set(f"sub:active:{adapter.channel}", "1", ex=SUB_TTL)
+
     log.info("channels.inbound_started", every=interval)
 
     inflight: set[asyncio.Task] = set()
@@ -76,4 +83,5 @@ async def inbound_loop() -> None:
                 for adapter in adapters:
                     if hasattr(adapter, "renew"):
                         await adapter.renew()
+                        await r.set(f"sub:active:{adapter.channel}", "1", ex=SUB_TTL)
         await asyncio.sleep(interval)
