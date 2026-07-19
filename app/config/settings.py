@@ -87,7 +87,10 @@ class Settings(BaseSettings):
     # in addition to @Agent mentions.
     mention_keywords: str = ("@Agent,BeOne,Trane,Otsuka,"
                              "start monitoring,start beone,start trane,"
-                             "start otsuka,PR monitoring")
+                             "start otsuka,PR monitoring,"
+                             # gate replies + follow-up intents must surface too
+                             "approve,approved,proceed,looks good,go ahead,"
+                             "changes,revise,reject,RT")
     smtp_host: str = "localhost"
     smtp_port: int = 3025
     imap_host: str = "localhost"
