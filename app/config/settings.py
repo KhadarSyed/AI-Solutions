@@ -90,6 +90,8 @@ class Settings(BaseSettings):
     # Trigger phrases the mention subscription watches for (comma-separated),
     # in addition to @Agent mentions.
     mention_keywords: str = ("@Agent,BeOne,Trane,Otsuka,"
+                             # canonical trigger subjects
+                             "monitor beone,monitor trane,monitor otsuka,"
                              "start monitoring,start beone,start trane,"
                              "start otsuka,PR monitoring,"
                              # gate replies + follow-up intents must surface too
