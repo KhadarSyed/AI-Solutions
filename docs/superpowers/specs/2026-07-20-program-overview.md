@@ -3,6 +3,7 @@
 Captures the full target design agreed 2026-07-20. Each sub-project gets its own detailed spec → implementation plan → build, in order. This doc is the index + the cross-cutting decisions of record.
 
 ## Cross-cutting decisions (bind every sub-project)
+- **Agent network — controlled & fully wired.** One registry of every agent (WebSearch/Sources-Orchestrator, Competitor, Enricher, Tagging, Insight/Dashboard, Reflection, Self-Heal, Brain/Chat) with, for each: a single owning stage, typed input/output, an explicit **HandoffEnvelope** to its successor, and status events. **No orphaned/dead agents** — every registered agent is reachable from the graph and actually invoked (the audit found `self_heal` wired to nothing and SEMANTIC memory never written; #7 closes these). A startup assertion + a test verify each registered agent has a live call-site.
 - **Context engineering under concurrency (verified sound, must stay so):** per-request state lives only in LangGraph state (by `thread_id`), the `current_run_id` ContextVar, or DB rows (by `run_id`/`session_id`). No module-level mutable per-request state. One asyncio task per run + `Semaphore(max_concurrent_runs)` + per-session mutex. A concurrency test (two brands at once → zero cross-contamination) guards this.
 - **Agent identity:** named agents (WebSearch / Tagging / Dashboard / Chat) each emit `*_started` / `*_finished` status (count, elapsed, 1-line summary) and pass a typed **HandoffEnvelope** to the next.
 - **Competitors on by default** (5), unless the user explicitly names competitors.

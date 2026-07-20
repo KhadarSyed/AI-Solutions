@@ -53,12 +53,17 @@ Each competitor is its **own** query string (Google News is one-keyword-per-requ
 ### 4.5 Per-subject attribution
 Add `subject_brand: str` to `RawArticle` (the brand/competitor the query targeted). The orchestrator stamps it from the query group. Tagging and the chart builders (SOV, impact, competitive matrix — sub-project #2) attribute by `subject_brand` **and** extracted entities, so each competitor gets its true share instead of collapsing to the primary brand.
 
-### 4.6 apify / xpoz — now real (keys present in `.env`)
-`APIFY_TOKEN` and `XPOZ_API_KEY` are set, so both graduate from stubs to real connectors, enabled by key presence (`enabled()` → `bool(settings.apify_token)` / `bool(settings.xpoz_api_key)`), each normalizing to `RawArticle` and joining the concurrent fan-out.
-- **Apify** — run an actor via `https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items?token=…`, map dataset items → `RawArticle`. **Needs: the actor id** (recommend a Google-News / news-search actor) + its input shape.
-- **XPOz** — **undefined in the codebase** ("service definition pending"). **Needs: base URL, auth header, and a sample request/response** (or docs) before it can be implemented.
+### 4.6 apify / xpoz — now real (keys present in `.env`), enabled by key presence
+- **Apify** (`enabled()` → `bool(settings.apify_token)`) — run two actors via `https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items?token=…`:
+  - **Google Search Results Scraper** (`apify/google-search-scraper`) — organic news/web results for the brand/competitor queries.
+  - **RAG Web Browser** (`apify/rag-web-browser`) — search + fetch page content (gives real article text/URLs, complements Google-News decoding).
+  Map dataset items → `RawArticle`; `capabilities` = `max_results` (+ `date_range` where the actor supports it).
+- **XPOz** (`enabled()` → `bool(settings.xpoz_api_key)`) — a **social-listening MCP server** at `https://mcp.xpoz.ai/mcp`, static Bearer auth (token from `settings.xpoz_api_key`, no OAuth). It surfaces **Reddit + TikTok**, not news. The connector is a thin MCP client (reuse the teams-mcp streamable-http pattern but with a fixed `Authorization: Bearer` header) calling:
+  - `getRedditPostsByKeywords` and `getTiktokPostsByKeywords` with `query` = each brand/competitor, `startDate`/`endDate` from the window, `limit` from `max_results`, `responseType` = full so post bodies come back.
+  - **Normalization to `RawArticle` (social mapping):** Reddit → `publisher_name="Reddit — r/<subreddit>"`, `publisher_domain="reddit.com"`, `author=<redditor>`, `url=<post url>`, `content=title+selftext`; TikTok → `publisher_name="TikTok"`, `publisher_domain="tiktok.com"`, `author="@<user>"`, `content=<description>`. `source` = `"reddit"`/`"tiktok"`, plus a new `medium="social"` marker so the dashboard can separate social from news (news charts shouldn't be skewed by social volume). `capabilities` = `date_range + max_results`.
+  - XPOz is credit-based (has `getAccountDetails`/credits tools); cap `limit` conservatively and treat quota/errors as best-effort.
 
-Both are best-effort in the fan-out: failure/timeouts are isolated per source and never abort the run.
+All external sources are best-effort in the fan-out: per-source failures/timeouts are isolated and never abort the run. **Design note:** XPOz adds a *social* medium; #3 (dashboard) surfaces a Social breakdown and keeps social out of the news-only sentiment/publication charts unless explicitly combined.
 
 ### 4.7 Inbound subject gating (safety — "don't read every email")
 The agent must **only act on emails whose subject matches this system**, never process arbitrary inbox mail. Rule (applied in `email_agent.handle_inbound` before any intent classification):
