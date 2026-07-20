@@ -109,6 +109,24 @@ async def relevancy_filter(
     return kept
 
 
+def _subject_for(group: dict, article: RawArticle, brand: str) -> str:
+    if group.get("subject_per_query"):
+        return article.original_query or ""
+    subj = group.get("subject")
+    return brand if subj is None else subj
+
+
+async def _persist_source_file(session_id: str, payload: dict) -> None:
+    key = keys.source_file(session_id)
+    await get_artifact_store().put_json(key, payload)
+    async with get_sessionmaker()() as db, db.begin():
+        await db.execute(
+            update(SessionRow).where(SessionRow.id == uuid.UUID(session_id))
+            .values(source_file_key=key, articles_count=payload["stats"]["kept"],
+                    status="ingested")
+        )
+
+
 async def collect(
     *,
     session_id: str,
@@ -119,27 +137,60 @@ async def collect(
     country: str | None = None,
     max_per_query: int = 50,
     extra_articles: list[RawArticle] | None = None,
+    run_id: str | None = None,
 ) -> dict:
-    """Run the fleet and persist source_file. query_groups: [{name, queries:[...]}]."""
+    """Concurrent Sources Orchestrator: fan out (connector × query-group) under a
+    semaphore, isolate per-source failures, stamp subject_brand, emit per-source
+    status events, then dedupe → relevancy → persist source_file."""
+    import asyncio
+    import time
+
+    from app.orchestration.events import get_event_bus
+
     if days_back is None:
         days_back = get_settings().collection_days_back   # default 48h
     filters = SearchFilters(
         days_back=days_back, language=language, country=country, max_results=max_per_query
     )
+    sem = asyncio.Semaphore(get_settings().source_concurrency)
+    bus = get_event_bus() if run_id else None
 
     collected: list[RawArticle] = list(extra_articles or [])
     errors: list[str] = []
     per_source: dict[str, int] = {"file_upload": len(collected)} if collected else {}
 
-    for group in query_groups:
+    async def run_one(connector: Connector, group: dict) -> None:
         queries = group.get("queries", [])
-        for connector in enabled_connectors():
-            res = await connector.search(queries, filters)
-            for a in res.articles:
-                a.query_group = a.query_group or group.get("name", "")
-            collected.extend(res.articles)
-            errors.extend(res.errors)
-            per_source[connector.name] = per_source.get(connector.name, 0) + len(res.articles)
+        if not queries:
+            return
+        if bus:
+            await bus.emit(run_id, "source_started", node=connector.name,
+                           payload={"group": group["name"], "queries": len(queries)})
+        started = time.monotonic()
+        async with sem:
+            try:
+                res = await connector.search(queries, filters)
+            except Exception as exc:
+                errors.append(f"{connector.name}:{group['name']}: {exc}")
+                if bus:
+                    await bus.emit(run_id, "source_finished", node=connector.name,
+                                   payload={"group": group["name"], "count": 0,
+                                            "errors": 1, "error": str(exc)[:200]})
+                return
+        for a in res.articles:
+            a.query_group = a.query_group or group.get("name", "")
+            a.subject_brand = a.subject_brand or _subject_for(group, a, brand)
+        collected.extend(res.articles)
+        errors.extend(res.errors)
+        per_source[connector.name] = per_source.get(connector.name, 0) + len(res.articles)
+        if bus:
+            await bus.emit(run_id, "source_finished", node=connector.name,
+                           payload={"group": group["name"], "count": len(res.articles),
+                                    "errors": len(res.errors),
+                                    "elapsed_ms": int((time.monotonic() - started) * 1000)})
+
+    tasks = [run_one(c, g) for g in query_groups for c in enabled_connectors()]
+    await asyncio.gather(*tasks)
 
     unique, syndication = dedupe(collected)
     all_queries = [q for g in query_groups for q in g.get("queries", [])]
@@ -156,14 +207,8 @@ async def collect(
             "errors": errors,
         },
     }
-    key = keys.source_file(session_id)
-    await get_artifact_store().put_json(key, payload)
-
-    async with get_sessionmaker()() as db, db.begin():
-        await db.execute(
-            update(SessionRow)
-            .where(SessionRow.id == uuid.UUID(session_id))
-            .values(source_file_key=key, articles_count=len(kept), status="ingested")
-        )
-    log.info("ingestion.done", session=session_id, **payload["stats"] | {"errors": len(errors)})
+    await _persist_source_file(session_id, payload)
+    log.info("ingestion.done", session=session_id,
+             **{k: v for k, v in payload["stats"].items() if k != "errors"},
+             errors=len(errors))
     return payload["stats"]

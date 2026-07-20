@@ -49,6 +49,7 @@ async def collect(state: PipelineState) -> dict:
         session_id=session_id,
         brand=config.get("brand", state.get("brand", "")),
         query_groups=config.get("query_groups", state.get("query_groups", [])),
+        run_id=state.get("run_id"),
     )
     return {
         "raw_count": stats["raw"], "unique_count": stats["unique"],
