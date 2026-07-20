@@ -23,13 +23,13 @@ A real **WebSearch Agent** that, for every entry path, resolves the brand + up t
 ## 4. Components
 
 ### 4.1 Competitor resolution — `app/agents/competitor_agent.py`
-`async resolve_competitors(brand, project_id, override: list[str] | None) -> list[str]` with a fallback ladder:
-1. `override` (from an email/Teams instruction like `competitors: Carrier, Daikin`) — wins if present.
-2. `Project.competitors` (new column) if non-empty.
+**Default behavior: always run with 5 competitors** — competitor analysis is on by default; the only time we skip auto-research is when the user explicitly names competitors. `async resolve_competitors(brand, project_id, override: list[str] | None) -> list[str]` with a fallback ladder:
+1. `override` — user explicitly named competitors in the request (e.g. subject/body `competitors: Carrier, Daikin`). Wins if present; auto-research is skipped.
+2. `Project.competitors` (new column) if non-empty (a prior explicit set or cached research).
 3. Mem0 **SEMANTIC** recall (`"<brand> competitors"`) — reuse prior research.
-4. Else a `CompetitorResearch` GuardedAgent: web-search the brand's official/industry pages, return the top 5 direct competitors (typed output). Cache the result to `Project.competitors` **and** Mem0 SEMANTIC (this also fixes the "semantic memory is never written" gap from the audit).
+4. Else a `CompetitorResearch` GuardedAgent: web-search the brand's official/industry pages, return the top **5** direct competitors (typed output). Cache to `Project.competitors` **and** Mem0 SEMANTIC (also fixes the "semantic memory never written" audit gap).
 
-Capped at 5. Failure → empty list + a warning in status (never blocks the run).
+Capped at 5. Research failure → empty list + a status warning (never blocks the run).
 
 ### 4.2 Query-plan builder — `app/services/query_plan.py`
 `build_query_plan(brand, competitors, industry) -> list[query_group]`:
@@ -53,8 +53,20 @@ Each competitor is its **own** query string (Google News is one-keyword-per-requ
 ### 4.5 Per-subject attribution
 Add `subject_brand: str` to `RawArticle` (the brand/competitor the query targeted). The orchestrator stamps it from the query group. Tagging and the chart builders (SOV, impact, competitive matrix — sub-project #2) attribute by `subject_brand` **and** extracted entities, so each competitor gets its true share instead of collapsing to the primary brand.
 
-### 4.6 apify / xpoz
-Documented deferral: remain optional stubs. The orchestrator already treats sources as optional. **Open question for the user:** provide an Apify token + actor id (and clarify what "XPOz" is / its API) and they become first-class; otherwise they stay out of scope for #1.
+### 4.6 apify / xpoz — now real (keys present in `.env`)
+`APIFY_TOKEN` and `XPOZ_API_KEY` are set, so both graduate from stubs to real connectors, enabled by key presence (`enabled()` → `bool(settings.apify_token)` / `bool(settings.xpoz_api_key)`), each normalizing to `RawArticle` and joining the concurrent fan-out.
+- **Apify** — run an actor via `https://api.apify.com/v2/acts/{actor}/run-sync-get-dataset-items?token=…`, map dataset items → `RawArticle`. **Needs: the actor id** (recommend a Google-News / news-search actor) + its input shape.
+- **XPOz** — **undefined in the codebase** ("service definition pending"). **Needs: base URL, auth header, and a sample request/response** (or docs) before it can be implemented.
+
+Both are best-effort in the fan-out: failure/timeouts are isolated per source and never abort the run.
+
+### 4.7 Inbound subject gating (safety — "don't read every email")
+The agent must **only act on emails whose subject matches this system**, never process arbitrary inbox mail. Rule (applied in `email_agent.handle_inbound` before any intent classification):
+1. **New task** — subject matches a start pattern with a known brand: `^(start|run|begin|launch)\b.*\b(BeOne|Trane|Otsuka|<project brands>)\b` (case-insensitive), from a registered stakeholder.
+2. **Follow-up / gate reply** — subject carries an active **Task ID** tag `[<BRAND>-<YYYYMMDD>-<NNN>]` (the per-task subject introduced in sub-project #4).
+3. **Everything else → ignored** (logged as `inbound.subject_unmatched`, not processed).
+
+This also tightens the mention subscription: keep brand + command keywords, and treat the Task-ID tag as the reply trigger.
 
 ## 5. Data flow
 
