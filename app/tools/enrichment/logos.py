@@ -1,13 +1,14 @@
 """LogoResolver — brand/competitor logos, base64-embedded for self-contained HTML.
 
-Ladder: research memory (learned domain) → DDG official-site lookup → favicon
-service → base64 data URI. Anything unresolved gets a monogram badge spec."""
+Ladder: research memory (learned logo URL) → DDG official-site lookup → REAL logo
+from the homepage (og:image / apple-touch-icon / icon / header <img> logo) → Google
+favicon → monogram badge. The real-logo step is what replaces the bare "B" badge."""
 
 import asyncio
 import base64
 import contextlib
 import re
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -17,6 +18,75 @@ from app.observability.logging import get_logger
 log = get_logger(__name__)
 
 MONOGRAM_COLORS = ["#2563eb", "#7c3aed", "#0d9488", "#db2777", "#d97706", "#4f46e5"]
+
+# logo candidates in the page <head>/<header>, most brand-representative first
+_OG_A = re.compile(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', re.I)
+_OG_B = re.compile(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']', re.I)
+_APPLE = re.compile(r'<link[^>]+rel=["\'][^"\']*apple-touch-icon[^"\']*["\'][^>]+href=["\']([^"\']+)', re.I)
+_ICON = re.compile(r'<link[^>]+rel=["\'][^"\']*icon[^"\']*["\'][^>]+href=["\']([^"\']+)', re.I)
+_IMG_LOGO = re.compile(r'<img\b[^>]*(?:class|id|alt|src)=["\'][^"\']*logo[^"\']*["\'][^>]*>', re.I)
+_IMG_SRC = re.compile(r'\bsrc=["\']([^"\']+)', re.I)
+
+
+def _extract_logo_url(html: str, base_url: str) -> str | None:
+    """Best brand logo URL from homepage HTML, or None."""
+    for rx in (_OG_A, _OG_B, _APPLE, _ICON):
+        m = rx.search(html or "")
+        if m and m.group(1).strip():
+            return urljoin(base_url, m.group(1).strip())
+    tag = _IMG_LOGO.search(html or "")
+    if tag:
+        src = _IMG_SRC.search(tag.group(0))
+        if src:
+            return urljoin(base_url, src.group(1).strip())
+    return None
+
+
+def _valid_image_bytes(data: bytes, content_type: str) -> tuple[bool, str]:
+    """(is_image, mime). Sniffs magic bytes when the server mislabels content."""
+    if not (100 <= len(data) <= 1_500_000):
+        return False, ""
+    ctype = (content_type or "").split(";")[0].strip().lower()
+    if ctype.startswith("image/"):
+        return True, ctype
+    head = data[:256]
+    if data[:8].startswith(b"\x89PNG"):
+        return True, "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return True, "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return True, "image/gif"
+    if b"<svg" in head.lower():
+        return True, "image/svg+xml"
+    if data[:4] == b"RIFF" and b"WEBP" in head:
+        return True, "image/webp"
+    return False, ""
+
+
+async def _fetch_image(url: str) -> str | None:
+    """Download an image URL → base64 data-URI, validated."""
+    try:
+        async with httpx.AsyncClient(timeout=12, follow_redirects=True) as client:
+            resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
+            resp.raise_for_status()
+        ok, mime = _valid_image_bytes(resp.content, resp.headers.get("content-type", ""))
+        if not ok:
+            return None
+        return f"data:{mime};base64," + base64.b64encode(resp.content).decode()
+    except Exception:
+        return None
+
+
+async def _real_logo(domain: str) -> str | None:
+    """Fetch the homepage and extract the real brand logo (not a favicon)."""
+    with contextlib.suppress(Exception):
+        from app.tools.scraping.fetcher import fetch_html
+
+        html = await fetch_html(f"https://{domain}", timeout=12)
+        logo_url = _extract_logo_url(html, f"https://{domain}")
+        if logo_url:
+            return await _fetch_image(logo_url)
+    return None
 
 
 def monogram(name: str, index: int = 0) -> dict:
@@ -72,7 +142,10 @@ async def resolve_logos(project_id: str, names: list[str], budget: int = 6) -> l
         if domain is None:
             domain = await _find_domain(name)
 
-        data_uri = await _fetch_logo(domain) if domain else None
+        # real logo from the homepage first, then the favicon, then a monogram
+        data_uri = None
+        if domain:
+            data_uri = await _real_logo(domain) or await _fetch_logo(domain)
         if data_uri:
             out.append({"name": name, "kind": "image", "data_uri": data_uri,
                         "domain": domain})
