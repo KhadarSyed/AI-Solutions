@@ -19,6 +19,34 @@ def register_adapter(channel: str, adapter: ChannelAdapter) -> None:
     _adapters[channel] = adapter
 
 
+def _subject(state: PipelineState, base: str) -> str:
+    """Prefix a subject with the Task-ID tag so each task keeps its own thread."""
+    tid = state.get("task_id") or (state.get("origin_address") or {}).get("task_id")
+    return f"[{tid}] {base}" if tid else base
+
+
+_AGENT_ICON = {"WebSearch": "🔎", "Tagging": "🏷️", "Dashboard": "📊"}
+
+
+async def notify_agent(state: PipelineState, agent: str, phase: str, message: str) -> None:
+    """Per-agent start/finish status to the run's origin channel (email included) +
+    the run stream. phase is 'started' or 'finished'. Threaded under the task."""
+    import contextlib
+
+    run_id = state.get("run_id")
+    if run_id:
+        await get_event_bus().emit(run_id, "agent_status", node=agent,
+                                   payload={"phase": phase, "message": message[:300]})
+    adapter = _adapters.get(state.get("origin_channel", "web"))
+    if adapter is None:
+        return
+    icon = _AGENT_ICON.get(agent, "•")
+    subject = _subject(state, f"{state.get('brand', '')} — {agent} Agent {phase}".strip(" —"))
+    with contextlib.suppress(Exception):
+        await adapter.send(state.get("origin_address", {}),
+                           OutboundMessage(subject=subject, text=f"{icon} {message}"))
+
+
 async def _deliver(state: PipelineState, event: str, message: str,
                    attachments: list[tuple[str, bytes, str]], subject: str) -> None:
     channel = state.get("origin_channel", "web")
@@ -69,7 +97,8 @@ async def notify_gate(state: PipelineState, *, gate: int, csv_key: str, message:
             log.info("notifier.csv_load_failed", error=str(exc)[:120])
 
     await _deliver(state, "notification_sent", message, attachments,
-                   subject=f"Gate {gate} — action needed")
+                   subject=_subject(state, f"{state.get('brand', 'Monitoring')} — "
+                                    f"review needed (Gate {gate})"))
 
 
 async def notify_progress(state: PipelineState, message: str) -> None:
@@ -142,4 +171,4 @@ async def notify_complete(state: PipelineState) -> None:
                                 "application/vnd.openxmlformats-officedocument."
                                 "wordprocessingml.document"))
     await _deliver(state, "result_delivered", message, attachments,
-                   subject=f"{brand} — media analysis complete")
+                   subject=_subject(state, f"{brand} — media analysis complete"))

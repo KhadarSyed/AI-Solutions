@@ -38,11 +38,21 @@ async def _progress(state: PipelineState, message: str) -> None:
         await notify_progress(state, message)
 
 
+async def _agent(state: PipelineState, agent: str, phase: str, message: str) -> None:
+    import contextlib
+
+    from app.channels.notifier import notify_agent
+    with contextlib.suppress(Exception):
+        await notify_agent(state, agent, phase, message)
+
+
 async def collect(state: PipelineState) -> dict:
     from app.services import ingestion_service
 
     session_id = state["session_id"]
     brand = state.get("brand", "the brand")
+    await _agent(state, "WebSearch", "started",
+                 f"Collecting {brand} + competitor coverage from all sources.")
     await _progress(state, f"🔍 Searching news sources for {brand} (last 48 hours)…")
     config = await _session_config(session_id)
     stats = await ingestion_service.collect(
@@ -120,6 +130,9 @@ async def gate1_consent(state: PipelineState) -> dict:
 async def tag(state: PipelineState) -> dict:
     from app.services.tagging_service import tag_session
 
+    await _agent(state, "Tagging", "started",
+                 "Approved — enriching reach and tagging sentiment, theme, section "
+                 "and entities. WebSearch Agent is free for your next request.")
     await _progress(state, "🏷️ Tagging articles (sentiment, theme, section, entities)…")
     stats = await tag_session(session_id=state["session_id"], project_id=state["project_id"])
     return {
@@ -164,6 +177,9 @@ async def dashboards(state: PipelineState) -> dict:
 
     from app.services.dashboard_service import build_dashboards
 
+    await _agent(state, "Dashboard", "started",
+                 "Approved — building your dashboards, per-chart insights and the "
+                 "branded report now.")
     await _progress(state, "📊 Building the 5 dashboards and the branded report…")
     payload = await build_dashboards(session_id=state["session_id"], force=True)
 

@@ -54,12 +54,19 @@ class RunManager:
 
         run_id = uuid.uuid4()
         thread_id = f"run-{run_id}"
+        # human-friendly Task ID, stored on the run (origin_address) so gate replies
+        # can be matched to the exact task and every subject carries it
+        from app.orchestration.task_id import make_task_id
+
+        task_id = input_state.get("task_id") or await make_task_id(input_state.get("brand", ""))
+        addr = dict(origin_address or {})
+        addr.setdefault("task_id", task_id)
         async with get_sessionmaker()() as db, db.begin():
             db.add(
                 Run(
                     id=run_id, session_id=session_id, graph_name=graph_name,
                     thread_id=thread_id, status="running",
-                    origin_channel=origin_channel, origin_address=origin_address or {},
+                    origin_channel=origin_channel, origin_address=addr,
                     heartbeat_at=datetime.now(UTC),
                 )
             )
@@ -67,11 +74,13 @@ class RunManager:
         state: PipelineState = {
             **input_state,
             "run_id": str(run_id),
+            "task_id": task_id,
             "origin_channel": origin_channel,
-            "origin_address": origin_address or {},
+            "origin_address": addr,
         }
         self._spawn(str(run_id), thread_id, graph_name, state)
-        await get_event_bus().emit(run_id, "run_started", payload={"graph": graph_name})
+        await get_event_bus().emit(run_id, "run_started",
+                                   payload={"graph": graph_name, "task_id": task_id})
         return str(run_id)
 
     async def resume(self, run_id: str, resume_payload: dict | None = None) -> None:

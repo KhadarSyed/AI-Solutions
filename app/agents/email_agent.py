@@ -108,18 +108,16 @@ async def _match_project(inbound: ChannelInbound) -> tuple[Project | None, bool]
     return None, False
 
 
-async def _pending_gate_run(project_id: str) -> Run | None:
+async def _pending_gate_run(project_id: str, task_id: str | None = None) -> Run | None:
     async with get_sessionmaker()() as db:
-        return (
-            await db.execute(
-                select(Run).where(Run.status == "awaiting_human",
-                                  Run.session_id.in_(
-                                      select(SessionRow.id).where(
-                                          SessionRow.project_id == uuid.UUID(project_id))
-                                  ))
-                .order_by(Run.created_at.desc())
-            )
-        ).scalars().first()
+        q = select(Run).where(
+            Run.status == "awaiting_human",
+            Run.session_id.in_(
+                select(SessionRow.id).where(SessionRow.project_id == uuid.UUID(project_id))),
+        )
+        if task_id:   # match the exact task when the reply carries its [TASK-ID]
+            q = q.where(Run.origin_address["task_id"].astext == task_id)
+        return (await db.execute(q.order_by(Run.created_at.desc()))).scalars().first()
 
 
 def _detect_brand(text: str) -> str:
@@ -190,9 +188,11 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
     from app.agents.competitor_agent import resolve_competitors
     from app.db.models import GeneratedQuery
     from app.orchestration.run_manager import get_run_manager
+    from app.orchestration.task_id import make_task_id
     from app.services.query_plan import build_query_plan
 
     brand = brand or project.brand_name
+    task_id = await make_task_id(brand)
     override = _parse_competitor_override(inbound.text)   # user-named competitors win
     competitors = await resolve_competitors(brand, str(project.id), override=override)
     query_groups = build_query_plan(brand, competitors, project.industry)
@@ -210,13 +210,15 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
     run_id = await get_run_manager().start(
         graph_name="pipeline",
         input_state={"project_id": str(project.id), "session_id": sid,
-                     "brand": brand, "query_groups": query_groups},
+                     "brand": brand, "query_groups": query_groups,
+                     "competitors": competitors, "task_id": task_id},
         session_id=sid,
         origin_channel=inbound.channel,
-        origin_address=inbound.address,
+        origin_address={**(inbound.address or {}), "task_id": task_id},
     )
-    log.info("inbound.start_run", brand=brand, channel=inbound.channel, run_id=run_id)
-    return {"run_id": run_id, "session_id": sid, "brand": brand}
+    log.info("inbound.start_run", brand=brand, channel=inbound.channel,
+             run_id=run_id, task_id=task_id)
+    return {"run_id": run_id, "session_id": sid, "brand": brand, "task_id": task_id}
 
 
 async def handle_inbound(inbound: ChannelInbound) -> dict:
@@ -232,17 +234,22 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
         return {"handled": False, "reason": "subject not recognized for this system"}
     project_id = str(project.id)
 
-    run = await _pending_gate_run(project_id)
+    from app.orchestration.task_id import extract_task_id
+
+    tid = extract_task_id(inbound.subject) or extract_task_id(inbound.text)
+    run = await _pending_gate_run(project_id, task_id=tid)
     intent = await _classify(inbound, has_pending_gate=run is not None)
     adapter = await _adapter_for(inbound.channel)
 
     if intent.kind == "start_run" and run is None:
         result = await _start_run(project, intent.brand, inbound)
+        tid = result["task_id"]
         with contextlib.suppress(Exception):
             await adapter.send(inbound.address, OutboundMessage(
-                subject=f"Re: {inbound.subject}",
-                text=(f"Starting media monitoring for {intent.brand}. I'll send the collected "
-                      f"articles here for your approval shortly (run {result['run_id'][:8]})."),
+                subject=f"[{tid}] {intent.brand} Monitoring — started",
+                text=(f"Task {tid} started for {intent.brand}. The WebSearch Agent is "
+                      "collecting coverage now; I'll email the collected articles here for "
+                      f"your review shortly. Keep [{tid}] in the subject on any reply."),
             ))
         return {"handled": True, "action": "start_run", **result}
 

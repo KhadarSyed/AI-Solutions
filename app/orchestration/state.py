@@ -10,6 +10,7 @@ def _merge_dict(left: dict, right: dict) -> dict:
 class PipelineState(TypedDict, total=False):
     # identity
     run_id: str
+    task_id: str                 # human-friendly BRAND-YYYYMMDD-NNN, shown in subjects
     session_id: str
     project_id: str
     origin_channel: str          # web | email | teams_chat | teams_channel | scheduler
