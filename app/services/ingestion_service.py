@@ -68,7 +68,12 @@ def dedupe(articles: list[RawArticle]) -> tuple[list[RawArticle], dict[str, list
         if fp in by_fp:
             syndication.setdefault(fp, []).append(a.url)
             keeper = by_fp[fp]
-            if len(a.content) > len(keeper.content):  # keep richest copy
+            keeper_gnews = keeper.publisher_domain == "news.google.com"
+            a_gnews = a.publisher_domain == "news.google.com"
+            # prefer a real outlet over a news.google.com redirect; otherwise richest copy
+            prefer_a = ((keeper_gnews and not a_gnews)
+                        or (keeper_gnews == a_gnews and len(a.content) > len(keeper.content)))
+            if prefer_a:
                 syndication[fp].append(keeper.url)
                 syndication[fp].remove(a.url)
                 by_fp[fp] = a

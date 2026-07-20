@@ -65,6 +65,9 @@ class XPozConnector(Connector):
             res = await session.call_tool(tool, args,
                                           read_timeout_seconds=timedelta(seconds=40))
         text = "".join(getattr(i, "text", "") or "" for i in res.content)
+        # XPOz returns service-level errors (e.g. usage-limit) as a status: error body
+        if "status: error" in text or '"status":"error"' in text or '"status": "error"' in text:
+            raise RuntimeError(" ".join(text.split())[:200])
         with contextlib.suppress(Exception):
             data = json.loads(text)
             if isinstance(data, dict):
