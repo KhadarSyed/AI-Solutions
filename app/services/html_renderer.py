@@ -43,61 +43,85 @@ CDN = {
 
 THEMES = {
     "dark": """
-:root{--bg:#0f172a;--card:#1e293b;--card2:#273449;--ink:#f1f5f9;--ink2:#94a3b8;
---accent:#2563eb;--line:#334155;--good:#34d399;--bad:#f87171}
+:root{--bg:#0a0a0c;--card:#161719;--card2:#1f2124;--ink:#f5f5f7;--ink2:#a1a1a6;
+--muted:#8a8a90;--accent:#3b82f6;--line:#2a2c30;--good:#30d158;--bad:#ff453a;
+--shadow:0 1px 2px rgba(0,0,0,.5),0 14px 34px -10px rgba(0,0,0,.6);
+--shadow-lift:0 1px 2px rgba(0,0,0,.5),0 22px 46px -12px rgba(0,0,0,.7)}
 body{background:var(--bg);color:var(--ink)}
-.kpi-card{background:linear-gradient(135deg,var(--accent),#1d4ed8);color:#fff}
+.banner{background:linear-gradient(120deg,#0b1224,#0a0a0c)}
 """,
     "light": """
-:root{--bg:#F4F5F7;--card:#FFFFFF;--card2:#F0F2F5;--ink:#161B22;--ink2:#57606C;
---accent:#12386E;--line:#E2E5EA;--good:#127A50;--bad:#B3261E}
+:root{--bg:#fbfbfd;--card:#ffffff;--card2:#f4f4f7;--ink:#1d1d1f;--ink2:#6e6e73;
+--muted:#86868b;--accent:#0b6bcb;--line:#e7e7ec;--good:#127a50;--bad:#c0362c;
+--shadow:0 1px 2px rgba(0,0,0,.04),0 14px 32px -12px rgba(20,30,60,.14);
+--shadow-lift:0 1px 2px rgba(0,0,0,.05),0 24px 46px -14px rgba(20,30,60,.22)}
 body{background:var(--bg);color:var(--ink)}
-.kpi-card{background:linear-gradient(135deg,var(--accent),#1E4E96);color:#fff}
+.banner{background:linear-gradient(120deg,#12386e,#0b6bcb)}
 """,
 }
 
 BASE_CSS = """
+:root{--font-display:'Fraunces',Georgia,'Times New Roman',serif;
+--font-body:'Hanken Grotesk',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 *{box-sizing:border-box;margin:0}
-body{font-family:Inter,'Segoe UI',system-ui,sans-serif;font-size:14px;line-height:1.5}
-.banner{position:relative;height:210px;overflow:hidden;
-  background:linear-gradient(120deg,var(--accent),#0e7490)}
-.banner video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.5}
-.banner .overlay{position:absolute;inset:0;display:flex;flex-direction:column;
-  justify-content:flex-end;padding:26px 34px;
-  background:linear-gradient(180deg,transparent,rgba(2,6,23,.72))}
-.banner h1{font-size:30px;font-weight:800;letter-spacing:-.02em;color:#fff}
-.banner .meta{color:#cbd5e1;font-size:12.5px;margin-top:4px}
-.logos{display:flex;gap:10px;align-items:center;position:absolute;top:18px;right:26px}
-.logo{width:44px;height:44px;border-radius:12px;background:#ffffffde;display:grid;
-  place-items:center;overflow:hidden;box-shadow:0 4px 14px rgba(0,0,0,.35)}
-.logo img{width:80%;height:80%;object-fit:contain}
-.logo.mono{color:#fff;font-weight:800;font-size:15px}
-.logo.small{width:34px;height:34px;border-radius:9px;font-size:12px}
-.wrap{max-width:1280px;margin:0 auto;padding:22px 26px 70px}
-.tabs{display:flex;gap:8px;margin:18px 0;flex-wrap:wrap}
-.tab{padding:12px 24px;border-radius:8px;background:var(--card);color:var(--ink2);
-  border:1px solid var(--line);cursor:pointer;font-weight:600;font-size:13.5px}
-.tab.on{background:var(--accent);color:#fff;border-color:transparent}
+html{-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+body{font-family:var(--font-body);font-size:14px;line-height:1.55;letter-spacing:-.006em}
+.banner{position:relative;height:300px;overflow:hidden}
+.banner video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:.42}
+.banner .overlay{position:absolute;inset:0;max-width:1320px;margin:0 auto;
+  display:flex;flex-direction:column;justify-content:flex-end;padding:0 46px 42px;
+  background:linear-gradient(180deg,rgba(2,6,23,.05),rgba(2,6,23,.74))}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.24em;text-transform:uppercase;
+  color:rgba(255,255,255,.74);margin-bottom:14px;display:flex;align-items:center;gap:10px}
+.eyebrow::before{content:"";width:24px;height:1px;background:rgba(255,255,255,.55)}
+.banner h1{font-family:var(--font-display);font-size:46px;font-weight:600;line-height:1.03;
+  letter-spacing:-.02em;color:#fff;max-width:22ch;font-optical-sizing:auto}
+.banner .meta{color:rgba(255,255,255,.72);font-size:12.5px;margin-top:14px;letter-spacing:.01em}
+.logos{display:flex;gap:10px;align-items:center;position:absolute;top:26px;right:32px;z-index:2}
+.logo{width:46px;height:46px;border-radius:13px;background:rgba(255,255,255,.92);display:grid;
+  place-items:center;overflow:hidden;box-shadow:0 6px 18px rgba(0,0,0,.28);transition:transform .25s ease}
+.logo:hover{transform:translateY(-2px)}
+.logo img{width:78%;height:78%;object-fit:contain}
+.logo.mono{color:#12386e;font-weight:800;font-size:16px;font-family:var(--font-display)}
+.logo.small{width:36px;height:36px;border-radius:10px;font-size:12px}
+.wrap{max-width:1320px;margin:0 auto;padding:34px 46px 90px}
+.tabs{display:inline-flex;gap:4px;margin:4px 0 30px;padding:5px;border-radius:14px;
+  background:var(--card2);border:1px solid var(--line);flex-wrap:wrap}
+.tab{padding:9px 18px;border-radius:10px;background:transparent;color:var(--ink2);border:0;
+  cursor:pointer;font-weight:600;font-size:13px;font-family:var(--font-body);
+  transition:color .2s ease,background .2s ease,box-shadow .2s ease}
+.tab:hover{color:var(--ink)}
+.tab.on{background:var(--card);color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.14)}
 .tab:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.kpi-container{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));
-  gap:14px;margin-bottom:20px}
-.kpi-card{border-radius:16px;padding:20px;box-shadow:0 4px 20px rgba(0,0,0,.3)}
-.kpi-card small{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;
-  opacity:.75;font-weight:700}
-.kpi-card b{font-size:26px;font-variant-numeric:tabular-nums}
-.kpi-card .sub{font-size:11.5px;opacity:.8}
-.page{display:none}.page.on{display:block}
-.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
-.chart-insight{margin:2px 0 12px;font-size:12.5px;line-height:1.45;color:var(--muted,#64748b)}
-.card{background:var(--card);border-radius:16px;padding:20px;
-  box-shadow:0 4px 20px rgba(0,0,0,.3);border:1px solid var(--line)}
-.card h3{font-size:14.5px;margin-bottom:10px}
+.kpi-container{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));
+  gap:16px;margin-bottom:30px}
+.kpi-card{position:relative;overflow:hidden;background:var(--card);border:1px solid var(--line);
+  border-radius:18px;padding:22px 24px;box-shadow:var(--shadow);
+  transition:transform .25s ease,box-shadow .25s ease}
+.kpi-card::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--accent)}
+.kpi-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lift)}
+.kpi-card small{display:block;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--muted);font-weight:700}
+.kpi-card b{display:block;margin-top:8px;font-size:32px;font-weight:600;letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums;color:var(--ink)}
+.kpi-card .sub{font-size:11.5px;color:var(--ink2);margin-top:3px}
+.page{display:none}.page.on{display:block;animation:fade .4s ease both}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:20px}
+.chart-insight{margin:0 0 14px;font-size:12.5px;line-height:1.5;color:var(--ink2)}
+.card{background:var(--card);border-radius:20px;padding:24px;box-shadow:var(--shadow);
+  border:1px solid var(--line);transition:transform .25s ease,box-shadow .25s ease}
+.card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lift)}
+.card h3{font-family:var(--font-display);font-size:18px;font-weight:600;letter-spacing:-.01em;
+  margin-bottom:4px;color:var(--ink)}
 .chart{min-height:400px;width:100%}
-.summary-container .card{margin-bottom:14px}
-.summary-container li{margin:8px 0 8px 18px;font-size:14px}
-.summary-container h3{color:var(--accent)}
-footer{margin-top:34px;color:var(--ink2);font-size:11.5px;text-align:center}
-@media(max-width:640px){.chart-grid{grid-template-columns:1fr}.banner h1{font-size:22px}}
+.summary-container .card{margin-bottom:16px}
+.summary-container li{margin:10px 0 10px 18px;font-size:14px;line-height:1.55;color:var(--ink)}
+.summary-container h3{color:var(--ink);font-family:var(--font-display)}
+footer{margin-top:44px;color:var(--muted);font-size:11.5px;text-align:center;letter-spacing:.02em}
+@media(max-width:640px){.chart-grid{grid-template-columns:1fr}.banner{height:250px}
+  .banner h1{font-size:30px}.wrap{padding:24px 20px 70px}.banner .overlay{padding:0 22px 28px}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 """
 
 TAB_JS = """
@@ -196,6 +220,13 @@ def render(schema: dict) -> str:
     video_src = _safe_http_url(banner.get("video_url", "")) if banner.get("video_url") else ""
     video = (f'<video autoplay muted loop playsinline src="{video_src}"></video>'
              if video_src else "")
+    # editorial display + clean body fonts; skipped in true-offline embed mode
+    fonts_link = ("" if embed else
+                  '<link rel="preconnect" href="https://fonts.googleapis.com">'
+                  '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
+                  '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
+                  'family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&'
+                  'family=Hanken+Grotesk:wght@400;500;600;700&display=swap">')
     logos = schema.get("logos") or {}
     logo_strip = ""
     if logos:
@@ -278,6 +309,7 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{_e(schema.get("title", "Dashboard"))}</title>
+{fonts_link}
 <style>{THEMES.get(theme, THEMES["dark"])}{BASE_CSS}</style>
 </head>
 <body>
@@ -285,6 +317,7 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
   {video}
   {logo_strip}
   <div class="overlay">
+    <div class="eyebrow">PR Intelligence</div>
     <h1>{_e(schema.get("title", "Executive Dashboard"))}</h1>
     <div class="meta">Generated {_e(schema.get("generated_at", "")[:16].replace("T", " "))}
       · PR Intelligence Agent{" · template reused" if schema.get("template_reused") else ""}</div>
