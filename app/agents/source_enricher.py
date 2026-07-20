@@ -15,7 +15,7 @@ from app.llm_gateway.guarded import GuardedAgent
 from app.memory.mem0_service import MemoryType, recall, remember
 from app.observability.logging import get_logger
 from app.tools.connectors.base import RawArticle
-from app.tools.scraping.extractor import extract_metadata
+from app.tools.scraping.extractor import extract_byline, extract_metadata
 from app.tools.scraping.fetcher import fetch_html
 
 log = get_logger(__name__)
@@ -227,17 +227,24 @@ async def enrich_articles(articles: list[RawArticle], project_id: str) -> dict:
                     a.country = c.upper() if len(c) == 2 else c
                     stats["countries_resolved"] += 1
 
-    # article-page byline pass for still-missing authors (cheap metadata extract)
-    missing_author = [a for a in articles if not a.author][:10]
-    for a in missing_author:
-        try:
-            html = await fetch_html(a.url, timeout=10)
-            meta = extract_metadata(html, a.url)
-            if meta.get("author"):
-                a.author = meta["author"]
-                stats["authors_filled"] += 1
-        except Exception:
-            continue
+    # article-page byline pass — fetch the real article and extract the byline.
+    # skip news.google.com (redirect, not the article) and cap the fetch budget.
+    missing_author = [a for a in articles if not a.author and a.url
+                      and "news.google.com" not in (a.publisher_domain or "")][:25]
+    byline_sem = asyncio.Semaphore(5)
+
+    async def _fill_byline(a: RawArticle) -> None:
+        async with byline_sem:
+            try:
+                html = await fetch_html(a.url, timeout=10)
+            except Exception:
+                return
+        author = extract_byline(html) or extract_metadata(html, a.url).get("author", "")
+        if author:
+            a.author = author
+            stats["authors_filled"] += 1
+
+    await asyncio.gather(*(_fill_byline(a) for a in missing_author))
 
     log.info("enricher.done", **stats)
     return stats

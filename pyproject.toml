@@ -39,6 +39,7 @@ dependencies = [
     "beautifulsoup4>=4.12",
     "ddgs>=9",
     "scrapling>=0.2",
+    "curl-cffi>=0.7",
     "playwright>=1.47",
     "tavily-python>=0.5",
     "lingua-language-detector>=2.0",
