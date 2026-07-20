@@ -194,10 +194,29 @@ async def build_schema(request: DashboardRequest) -> dict:
 
     banner = {}
     if request.requirements.include_video_banner:
-        banner = (template or {}).get("banner") or {
-            "video_url": "https://videos.pexels.com/video-files/3129957/3129957-hd_1920_1080_25fps.mp4",
-            "credit": "Pexels",
-        }
+        banner = dict((template or {}).get("banner") or {})
+        if not banner.get("video_url"):
+            with contextlib.suppress(Exception):
+                import uuid
+
+                from app.db.base import get_sessionmaker
+                from app.db.models import Project
+                from app.tools.enrichment.pexels import brand_video
+
+                sov = boards.get("pr_impact", {}).get("share_of_voice", {}) or {}
+                brand = sov.get("brand") or request.title
+                async with get_sessionmaker()() as db:
+                    proj = await db.get(Project, uuid.UUID(request.project_id))
+                    industry = proj.industry if proj else None
+                vid = await brand_video(brand, industry)
+                if vid:
+                    banner = {"video_url": vid["video_url"], "poster": vid.get("poster", ""),
+                              "credit": "Pexels"}
+        if not banner.get("video_url"):
+            banner = {
+                "video_url": "https://videos.pexels.com/video-files/3129957/3129957-hd_1920_1080_25fps.mp4",
+                "credit": "Pexels",
+            }
 
     schema = {
         "title": request.title,
