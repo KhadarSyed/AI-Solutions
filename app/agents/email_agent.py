@@ -38,6 +38,32 @@ class InboundIntent(BaseModel):
 _START_RE = re.compile(r"\b(start|run|begin|kick off|monitor|track|launch)\b", re.I)
 _BRANDS = ("beone", "trane", "otsuka")
 
+# subject gating — the agent acts only on proper-subject mail, never the whole inbox
+_TASK_TAG = re.compile(r"\[[A-Z0-9]+-\d{8}-\d{3}\]")
+
+
+def subject_allowed(subject: str, brands: list[str]) -> bool:
+    """True if the subject is a start command for a known brand, or a reply
+    carrying a Task-ID tag. Everything else is ignored."""
+    s = subject or ""
+    if _TASK_TAG.search(s):
+        return True
+    low = s.lower()
+    return bool(_START_RE.search(low) and any(b.lower() in low for b in brands if b))
+
+
+def _parse_competitor_override(text: str) -> list[str] | None:
+    """Extract an explicit competitor list from the message, e.g. 'competitors: A, B'."""
+    m = re.search(r"competitors?\s*[:\-]\s*(.+)", text or "", re.I)
+    if not m:
+        return None
+    return [c.strip() for c in re.split(r"[,;]", m.group(1)) if c.strip()][:5]
+
+
+async def _all_brands() -> list[str]:
+    async with get_sessionmaker()() as db:
+        return [p.brand_name for p in (await db.execute(select(Project))).scalars().all()]
+
 
 async def _adapter_for(channel: str):
     from app.channels.email_imap import EmailAdapter
@@ -161,16 +187,22 @@ async def _answer_query(project_id: str, run: Run | None, inbound: ChannelInboun
 async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> dict:
     """Create a session for the brand and launch the pipeline on the origin channel,
     so both human gates come back to wherever the request arrived."""
+    from app.agents.competitor_agent import resolve_competitors
     from app.db.models import GeneratedQuery
     from app.orchestration.run_manager import get_run_manager
+    from app.services.query_plan import build_query_plan
 
     brand = brand or project.brand_name
-    query_groups = [{"name": "Brand News", "queries": [brand]}]
+    override = _parse_competitor_override(inbound.text)   # user-named competitors win
+    competitors = await resolve_competitors(brand, str(project.id), override=override)
+    query_groups = build_query_plan(brand, competitors, project.industry)
     async with get_sessionmaker()() as db, db.begin():
-        gq = GeneratedQuery(project_id=project.id, brand=brand, query_groups=query_groups)
+        gq = GeneratedQuery(project_id=project.id, brand=brand,
+                            query_groups=query_groups, competitors=competitors)
         db.add(gq)
         row = SessionRow(project_id=project.id,
-                         config={"brand": brand, "query_groups": query_groups})
+                         config={"brand": brand, "query_groups": query_groups,
+                                 "competitors": competitors})
         db.add(row)
         await db.flush()
         sid = str(row.id)
@@ -193,6 +225,11 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
     if project is None or not sender_verified:
         log.info("inbound.unverified", sender=inbound.sender)
         return {"handled": False, "reason": "sender is not a registered stakeholder"}
+
+    # subject gating — never act on arbitrary inbox mail (email channel only)
+    if inbound.channel == "email" and not subject_allowed(inbound.subject, await _all_brands()):
+        log.info("inbound.subject_unmatched", subject=(inbound.subject or "")[:80])
+        return {"handled": False, "reason": "subject not recognized for this system"}
     project_id = str(project.id)
 
     run = await _pending_gate_run(project_id)
