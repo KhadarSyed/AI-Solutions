@@ -151,6 +151,40 @@ async def _summaries(request: DashboardRequest, boards: dict, kpis: list[dict]) 
         return {"executive": [], "recommendations": []}
 
 
+class _ChartInsight(BaseModel):
+    chart_id: str = Field(description="echo the chart id exactly")
+    insight: str = Field(description="a crisp two-line insight grounded in this chart's numbers")
+
+
+class _ChartInsights(BaseModel):
+    items: list[_ChartInsight]
+
+
+async def _chart_insights(charts: list[dict]) -> dict[str, str]:
+    """One batched call: a grounded 2-line insight per chart, keyed by chart id."""
+    if not charts:
+        return {}
+    import json
+
+    compact = [{"id": c["id"], "title": c.get("title", ""),
+                "data": json.dumps(c.get("option") or {"geo": c.get("geo")}, default=str)[:700]}
+               for c in charts]
+    agent = GuardedAgent(
+        purpose="chart_insights", stage="dashboards",
+        system_prompt=(
+            "For each chart, write a crisp TWO-LINE insight grounded ONLY in that "
+            "chart's numbers — verbatim values, no invention, no preamble. Echo the "
+            "chart_id exactly. Return one entry per input chart."),
+        output_type=_ChartInsights, temperature=0.0, cacheable=True,
+    )
+    try:
+        res = await agent.run(json.dumps(compact, default=str)[:11000])
+        return {i.chart_id: i.insight.strip() for i in res.items if i.insight}
+    except Exception as exc:
+        log.warning("dashboard_agent.chart_insights_failed", error=str(exc)[:150])
+        return {}
+
+
 async def build_schema(request: DashboardRequest) -> dict:
     boards = await _fetch_boards(request)
     if not request.requirements.include_geo:
@@ -168,6 +202,10 @@ async def build_schema(request: DashboardRequest) -> dict:
                 prefs.preferred_types[cid] = ctype
 
     charts = select_charts(boards, prefs) if request.requirements.include_charts else []
+    if charts and request.requirements.include_ai_summary:
+        insights = await _chart_insights(charts)
+        for c in charts:
+            c["insight"] = insights.get(c["id"], "")
 
     tab_ids = [t for t in ("overview", "coverage", "competitive", "reputation", "narratives")
                if any(c["tab"] == t for c in charts)]

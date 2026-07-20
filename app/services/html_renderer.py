@@ -88,6 +88,7 @@ body{font-family:Inter,'Segoe UI',system-ui,sans-serif;font-size:14px;line-heigh
 .kpi-card .sub{font-size:11.5px;opacity:.8}
 .page{display:none}.page.on{display:block}
 .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:16px}
+.chart-insight{margin:2px 0 12px;font-size:12.5px;line-height:1.45;color:var(--muted,#64748b)}
 .card{background:var(--card);border-radius:16px;padding:20px;
   box-shadow:0 4px 20px rgba(0,0,0,.3);border:1px solid var(--line)}
 .card h3{font-size:14.5px;margin-bottom:10px}
@@ -225,7 +226,9 @@ def render(schema: dict) -> str:
         else:
             cards = "".join(
                 f'<div class="card"><h3>{_e(c["title"])}</h3>'
-                f'<div class="chart" id="chart-{_e(c["id"])}"></div></div>'
+                + (f'<p class="chart-insight">{_e(c["insight"])}</p>'
+                   if c.get("insight") else "")
+                + f'<div class="chart" id="chart-{_e(c["id"])}"></div></div>'
                 for c in charts if c["tab"] == t["id"]
             )
             body = f'<div class="chart-grid">{cards}</div>'
