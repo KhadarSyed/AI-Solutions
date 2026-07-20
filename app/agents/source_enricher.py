@@ -40,7 +40,7 @@ class DomainFacts(BaseModel):
 
 
 class _PublisherCountry(BaseModel):
-    domain: str
+    publisher: str = Field(description="echo the publisher label exactly as given")
     country: str = Field(description='ISO-3166 alpha-2, or "all" if genuinely unknown')
 
 
@@ -48,21 +48,23 @@ class _PublisherCountries(BaseModel):
     items: list[_PublisherCountry]
 
 
-async def countries_from_knowledge(pairs: list[tuple[str, str]]) -> dict[str, str]:
+async def countries_from_knowledge(publishers: list[str]) -> dict[str, str]:
     """One batched call: infer each publisher's HOME country from the model's own
-    knowledge of the outlet (name + domain) — no page fetch. This is what fills
-    country for the many well-known .com publishers whose footers never state it."""
-    if not pairs:
+    knowledge of the outlet — no page fetch. Keyed on the publisher NAME (not the
+    domain) because aggregator feeds (news.google.com) share one redirect domain
+    across many distinct outlets. Returns {name_lower: country}."""
+    if not publishers:
         return {}
-    listing = "\n".join(f"- {name or domain} ({domain})" for name, domain in pairs)
+    listing = "\n".join(f"- {p}" for p in publishers)
     agent = GuardedAgent(
         purpose="publisher_country", stage="enrich",
         system_prompt=(
-            "You are given news publishers (name + domain). For each, return its "
-            "HOME/headquarters country as an ISO 3166-1 alpha-2 code using your "
-            "knowledge of the outlet (e.g. The Economic Times→IN, Reuters→GB, "
-            "Sports Illustrated→US, The Straits Times→SG). Return exactly one entry "
-            "per input domain; use \"all\" only when the outlet is genuinely unknown."
+            "You are given news publisher NAMES. For each, return its HOME/"
+            "headquarters country as an ISO 3166-1 alpha-2 code using your knowledge "
+            "of the outlet (e.g. The Economic Times→IN, Reuters→GB, Sports "
+            "Illustrated→US, Yahoo→US, The Straits Times→SG). Echo the publisher "
+            "label back exactly as given. Return exactly one entry per input; use "
+            "\"all\" only when the outlet is genuinely unknown to you."
         ),
         output_type=_PublisherCountries, temperature=0.0, cacheable=True,
     )
@@ -71,7 +73,7 @@ async def countries_from_knowledge(pairs: list[tuple[str, str]]) -> dict[str, st
     except Exception as exc:
         log.warning("enricher.knowledge_failed", error=str(exc)[:150])
         return {}
-    return {i.domain: i.country for i in res.items if i.country}
+    return {i.publisher.strip().lower(): i.country for i in res.items if i.country}
 
 
 def country_from_tld(domain: str) -> str | None:
@@ -209,16 +211,18 @@ async def enrich_articles(articles: list[RawArticle], project_id: str) -> dict:
             stats["authors_filled"] += 1
 
     # knowledge-based country fill — the model knows most outlets' home country
-    # without a page fetch; this is the primary source of country coverage
-    unresolved = {}
-    for a in articles:
-        if a.country in ("", "all") and a.publisher_domain:
-            unresolved.setdefault(a.publisher_domain, a.publisher_name or a.publisher_domain)
+    # without a page fetch; keyed on publisher NAME so aggregator redirects
+    # (news.google.com) don't collapse many outlets onto one domain
+    def _label(a: RawArticle) -> str:
+        return (a.publisher_name or a.publisher_domain or "").strip()
+
+    unresolved = {_label(a).lower(): _label(a)
+                  for a in articles if a.country in ("", "all") and _label(a)}
     if unresolved:
-        known = await countries_from_knowledge([(n, d) for d, n in unresolved.items()])
+        known = await countries_from_knowledge(list(unresolved.values()))
         for a in articles:
             if a.country in ("", "all"):
-                c = known.get(a.publisher_domain)
+                c = known.get(_label(a).lower())
                 if c and c != "all":
                     a.country = c
                     stats["countries_resolved"] += 1
