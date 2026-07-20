@@ -168,6 +168,34 @@ async def set_approval(
     return _find(payload, article_id)
 
 
+async def bulk_approve(*, project_id: str, session_id: str,
+                       for_monitoring: bool = True) -> int:
+    """Approve the entire tagged set at once — a Gate 2 'APPROVE' reply means the
+    stakeholder approved these articles for dashboards and monitoring. Returns the
+    number approved. Individual edits/rejections still happen via the review API
+    before approval; this flips whatever remains."""
+    approved_ids: list[str] = []
+
+    def mutate(payload: dict) -> list[dict]:
+        for a in payload.get("articles", []):
+            a["is_approved"] = True
+            if for_monitoring:
+                a["is_approved_for_monitoring"] = True
+            if a.get("id"):
+                approved_ids.append(a["id"])
+        return []  # a stage-gate bulk approval isn't a per-article correction signal
+
+    await _locked_mutation(session_id, mutate)
+    with contextlib.suppress(Exception):  # embedding flags are best-effort
+        for aid in approved_ids:
+            await vector_store.sync_flags(
+                session_id, aid, is_approved=True,
+                is_approved_for_monitoring=for_monitoring,
+            )
+    log.info("review.bulk_approved", session_id=session_id, count=len(approved_ids))
+    return len(approved_ids)
+
+
 async def delete_article(*, project_id: str, session_id: str, article_id: str) -> int:
     def mutate(payload: dict) -> list[dict]:
         article = _find(payload, article_id)

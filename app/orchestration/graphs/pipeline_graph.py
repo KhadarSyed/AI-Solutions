@@ -143,8 +143,19 @@ async def gate2_approval(state: PipelineState) -> dict:
         "gate": 2, "kind": "approve_tagged", "csv_key": csv_key,
         "channel": state.get("origin_channel"), "message": message,
     })
-    return {"gate2_decision": decision.get("decision"),
-            "gate2_feedback": decision.get("feedback", "")}
+    result = {"gate2_decision": decision.get("decision"),
+              "gate2_feedback": decision.get("feedback", "")}
+    # Approving the tagged CSV means the stakeholder approved these articles —
+    # mark the whole set approved so the dashboards/report (approved-only) aren't empty.
+    if decision.get("decision") == "approved":
+        import contextlib
+
+        from app.services.review_service import bulk_approve
+        with contextlib.suppress(Exception):
+            n = await bulk_approve(project_id=state["project_id"], session_id=session_id)
+            result["approved_count"] = n
+            await _progress(state, f"✅ Approved {n} articles — building dashboards.")
+    return result
 
 
 async def dashboards(state: PipelineState) -> dict:
