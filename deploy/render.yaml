@@ -1,0 +1,69 @@
+# Render Blueprint — PR Intelligence Agent production backend.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# What this provisions:
+#   - prsol-api      : the always-on Docker web service (API + LangGraph workers +
+#                      the 5-second email/Teams poll loop). MUST be a paid plan so it
+#                      never spins down (free tier sleeps and would stop polling).
+#   - prsol-postgres : managed Postgres 16 (enable the `vector` extension — see runbook).
+#   - prsol-redis    : managed Key Value (Redis) for the event bus, cache, sessions.
+#   - a 1 GB disk mounted at /app/data/local so the teams-mcp OAuth token survives deploys.
+#
+# Neo4j is NOT offered by Render — use Neo4j AuraDB (free tier) and set NEO4J_* below.
+# Secrets (sync:false) are entered in the Render dashboard, never committed.
+
+services:
+  - type: web
+    name: prsol-api
+    runtime: docker
+    dockerfilePath: ./docker/api.Dockerfile
+    dockerContext: .
+    plan: standard                     # always-on; do NOT use free (it sleeps)
+    healthCheckPath: /health
+    autoDeploy: true
+    disk:
+      name: prsol-data
+      mountPath: /app/data/local       # persists data/local/teams_token.json
+      sizeGB: 1
+    startCommand: "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      # --- wired automatically from the managed resources ---
+      - key: REDIS_URL
+        fromService: { type: keyvalue, name: prsol-redis, property: connectionString }
+      - key: ADMIN_API_KEY
+        generateValue: true
+      # --- set in the dashboard (secrets / values you provide) ---
+      # DATABASE_URL: paste the prsol-postgres *Internal* URL but with the async driver,
+      #   i.e. postgresql+asyncpg://USER:PASS@HOST/DB  (Render gives postgresql://…)
+      - { key: DATABASE_URL,                sync: false }
+      - { key: NEO4J_URI,                   sync: false }   # neo4j+s://xxxx.databases.neo4j.io
+      - { key: NEO4J_USERNAME,              sync: false }
+      - { key: NEO4J_PASSWORD,              sync: false }
+      - { key: LLM_PROVIDER,                value: claude }
+      - { key: ANTHROPIC_API_KEY,           sync: false }
+      - { key: AZURE_OPENAI_API_KEY,        sync: false }
+      - { key: AZURE_OPENAI_ENDPOINT,       sync: false }
+      - { key: AZURE_OPENAI_CHAT_DEPLOYMENT,  value: gpt-4o }
+      - { key: AZURE_OPENAI_EMBED_DEPLOYMENT, sync: false }  # must be a REAL embedding deployment
+      - { key: TEAMS_MCP_URL,               value: https://teams-mcp-emrk.onrender.com/mcp }
+      - { key: XPOZ_API_KEY,                sync: false }
+      - { key: XPOZ_MCP_URL,                value: https://mcp.xpoz.ai/mcp }
+      - { key: SERPAPI_API_KEY,             sync: false }
+      - { key: TAVILY_API_KEY,              sync: false }
+      - { key: APIFY_TOKEN,                 sync: false }
+      - { key: PEXELS_API_KEY,              sync: false }
+      - { key: SEARXNG_URL,                 value: "" }      # empty = disabled in prod
+      - { key: DASHBOARD_ASSET_MODE,        value: cdn }
+      - { key: VERCEL_TOKEN,                sync: false }     # for automated per-report deploys
+      - { key: WATCHFILES_FORCE_POLLING,    value: "false" }
+
+  - type: keyvalue
+    name: prsol-redis
+    plan: standard
+    ipAllowList: []                    # only reachable from Render services
+    maxmemoryPolicy: noeviction
+
+databases:
+  - name: prsol-postgres
+    plan: standard
+    postgresMajorVersion: "16"

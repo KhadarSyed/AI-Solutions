@@ -38,6 +38,7 @@ class PipelineState(TypedDict, total=False):
     source_file_key: str
     tagged_file_key: str
     charts_data_file_key: str
+    dashboard_url: str            # Vercel-hosted report URL (when auto-publish is on)
 
     # bookkeeping
     notes: Annotated[dict[str, Any], _merge_dict]

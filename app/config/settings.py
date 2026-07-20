@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     # Dashboard rendering
     dashboard_asset_mode: Literal["embed", "cdn"] = "embed"
+    vercel_token: str = ""          # set → each finished report auto-publishes to Vercel
     pexels_api_key: str = ""
 
     # LLM — claude primary, Azure OpenAI is the fallback; per-stage overrides

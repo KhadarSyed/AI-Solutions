@@ -129,9 +129,12 @@ async def notify_complete(state: PipelineState) -> None:
     brand = state.get("brand", "your brand")
     session_id = state.get("session_id", "")
     slug = brand.lower().replace(" ", "_")
+    online = (f"🔗 View online anytime: {state['dashboard_url']}\n\n"
+              if state.get("dashboard_url") else "")
     message = (
         f"Your {brand} media analysis is complete — {state.get('approved_count', 0)} "
         f"approved articles across {state.get('tagged_count', 0)} tagged.\n\n"
+        f"{online}"
         "Attached:\n"
         "• dashboard.html — the interactive dashboard (open in any browser)\n"
         f"• {slug}_tagged_articles.csv — the full tagged dataset\n"

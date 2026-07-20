@@ -236,15 +236,25 @@ async def reflect(state: PipelineState) -> dict:
 
 
 async def deliver(state: PipelineState) -> dict:
-    """Send the finished analysis back to the origin channel (email thread / Teams
-    chat or channel). Web/scheduler origins just see the run stream."""
+    """Publish the dashboard to Vercel (if configured), then send the finished
+    analysis back to the origin channel with the durable link."""
     import contextlib
+
+    dashboard_url = None
+    with contextlib.suppress(Exception):
+        from app.services.vercel_publisher import publish_from_artifact
+
+        dashboard_url = await publish_from_artifact(
+            state["session_id"], state.get("brand", "report"), state.get("task_id", ""))
+    if dashboard_url:
+        state["dashboard_url"] = dashboard_url
 
     with contextlib.suppress(Exception):
         from app.channels.notifier import notify_complete
 
         await notify_complete(state)
-    return {"notes": {"deliver": {"channel": state.get("origin_channel")}}}
+    return {"notes": {"deliver": {"channel": state.get("origin_channel"),
+                                  "dashboard_url": dashboard_url}}}
 
 
 def _route_gate1(state: PipelineState) -> str:
