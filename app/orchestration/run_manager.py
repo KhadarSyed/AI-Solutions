@@ -130,6 +130,63 @@ class RunManager:
             self._execute(run_id, thread_id, graph_name, graph_input)
         )
 
+    async def _stream_graph(self, run_id: str, thread_id: str, graph_name: str,
+                            graph_input) -> None:
+        """Run/resume the graph, emitting node + gate events; sets the terminal
+        status. Raised exceptions propagate to the caller for self-heal."""
+        bus = get_event_bus()
+        async with self._sem, checkpointer() as saver:
+            graph = GRAPH_BUILDERS[graph_name](saver)
+            cfg = {"configurable": {"thread_id": thread_id}}
+            interrupted_payload: dict | None = None
+
+            async for update in graph.astream(graph_input, cfg, stream_mode="updates"):
+                for node, delta in update.items():
+                    if node == "__interrupt__":
+                        intr = delta[0] if isinstance(delta, tuple | list) else delta
+                        interrupted_payload = getattr(intr, "value", {}) or {}
+                        await bus.emit(run_id, "gate_raised", node="gate",
+                                       payload=interrupted_payload)
+                    else:
+                        await bus.emit(run_id, "node_finished", node=node,
+                                       payload={"delta": _summarize(delta)})
+
+            if interrupted_payload is not None:
+                await self._set_status(run_id, "awaiting_human",
+                                       awaiting_input=interrupted_payload)
+                await bus.emit(run_id, "awaiting_human", payload=interrupted_payload)
+            else:
+                await self._set_status(run_id, "completed")
+                await bus.emit(run_id, "run_completed")
+
+    async def _try_heal(self, run_id: str, thread_id: str, graph_name: str,
+                        graph_input, exc: Exception) -> bool:
+        """Run the self-heal ladder on a run failure. The only executor-level
+        remedy is a checkpoint-resume retry with backoff — resuming re-runs the
+        failed node from the last checkpoint."""
+        from app.orchestration.self_heal import RemedyAction, attempt_heal
+
+        project_id = graph_input.get("project_id", "") if isinstance(graph_input, dict) else ""
+
+        async def _retry() -> bool:
+            await asyncio.sleep(2)
+            try:
+                await self._stream_graph(run_id, thread_id, graph_name, None)  # resume
+                return True
+            except Exception as retry_exc:
+                log.info("run.heal_retry_failed", run_id=run_id, error=str(retry_exc)[:200])
+                return False
+
+        try:
+            res = await attempt_heal(
+                agent=graph_name, project_id=project_id, error_text=str(exc),
+                apply={RemedyAction.RETRY_WITH_BACKOFF: _retry},
+            )
+            return res.healed
+        except Exception as heal_exc:
+            log.info("run.heal_error", run_id=run_id, error=str(heal_exc)[:200])
+            return False
+
     async def _execute(self, run_id: str, thread_id: str, graph_name: str, graph_input) -> None:
         from app.orchestration.context import current_run_id
 
@@ -137,31 +194,7 @@ class RunManager:
         bus = get_event_bus()
         hb = asyncio.create_task(self._heartbeat_loop(run_id))
         try:
-            async with self._sem, checkpointer() as saver:
-                graph = GRAPH_BUILDERS[graph_name](saver)
-                cfg = {"configurable": {"thread_id": thread_id}}
-                interrupted_payload: dict | None = None
-
-                async for update in graph.astream(graph_input, cfg, stream_mode="updates"):
-                    for node, delta in update.items():
-                        if node == "__interrupt__":
-                            intr = delta[0] if isinstance(delta, tuple | list) else delta
-                            interrupted_payload = getattr(intr, "value", {}) or {}
-                            await bus.emit(run_id, "gate_raised", node="gate",
-                                           payload=interrupted_payload)
-                        else:
-                            await bus.emit(
-                                run_id, "node_finished", node=node,
-                                payload={"delta": _summarize(delta)},
-                            )
-
-                if interrupted_payload is not None:
-                    await self._set_status(run_id, "awaiting_human",
-                                           awaiting_input=interrupted_payload)
-                    await bus.emit(run_id, "awaiting_human", payload=interrupted_payload)
-                else:
-                    await self._set_status(run_id, "completed")
-                    await bus.emit(run_id, "run_completed")
+            await self._stream_graph(run_id, thread_id, graph_name, graph_input)
         except asyncio.CancelledError:
             status = "paused" if run_id in self._pausing else "cancelled"
             self._pausing.discard(run_id)
@@ -169,8 +202,11 @@ class RunManager:
             raise
         except Exception as exc:
             log.error("run.failed", run_id=run_id, error=str(exc))
-            await self._set_status(run_id, "failed", error=str(exc)[:2000])
-            await bus.emit(run_id, "run_failed", payload={"error": str(exc)[:500]})
+            if await self._try_heal(run_id, thread_id, graph_name, graph_input, exc):
+                log.info("run.self_healed", run_id=run_id)
+            else:
+                await self._set_status(run_id, "failed", error=str(exc)[:2000])
+                await bus.emit(run_id, "run_failed", payload={"error": str(exc)[:500]})
         finally:
             hb.cancel()
             self._tasks.pop(run_id, None)

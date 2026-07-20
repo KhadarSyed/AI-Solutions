@@ -12,7 +12,7 @@ from sqlalchemy import select
 
 from app.db.base import get_sessionmaker
 from app.db.models import CorrectionEvent
-from app.memory.mem0_service import MemoryType, remember
+from app.memory.mem0_service import MemoryType, recall, remember
 from app.observability.logging import get_logger
 
 log = get_logger(__name__)
@@ -105,11 +105,20 @@ def _patterns(events: list[CorrectionEvent]) -> list[str]:
 
 async def build_bias_block(project_id: str) -> str:
     events = await recent_corrections(project_id)
-    if not events:
-        return ""
-    rules = _patterns(events)
+    rules = _patterns(events) if events else []
+    # fold in distilled Mem0 FEEDBACK memories so the reflection→feedback loop and
+    # the tagging-bias loop are connected (feedback persists across runs/sources)
+    with contextlib.suppress(Exception):
+        hits = await recall(agent="correction_memory",
+                            query="reviewer preference tagging rules",
+                            project_id=project_id, memory_type=MemoryType.FEEDBACK, limit=8)
+        for h in hits:
+            text = str(h.get("memory", "")).strip()
+            if text and text not in rules:
+                rules.append(text)
     if not rules:
         return ""
+    rules = rules[:MAX_RULES_IN_PROMPT]
     return (
         "Reviewer-preference rules learned from past corrections (follow them):\n- "
         + "\n- ".join(rules)
