@@ -26,6 +26,10 @@ class RawArticle(BaseModel):
     query_group: str = ""
     original_query: str = ""
 
+    # attribution / classification
+    subject_brand: str = ""       # the brand or competitor the query targeted
+    medium: str = "news"          # "news" | "social"
+
     @field_validator("url")
     @classmethod
     def _clean_url(cls, v: str) -> str:
