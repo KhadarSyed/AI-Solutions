@@ -168,7 +168,9 @@ def select_charts(boards: dict, prefs: SelectionPrefs) -> list[dict]:
             "title": "PR Impact — Top Articles",
             "option": {
                 "yAxis": {"type": "category",
-                          "data": [a["id"] for a in reversed(top_imp)]},
+                          "data": [(f'{a.get("publisher_name", "")} — {a.get("title", "")[:36]}'
+                                    .strip(" —") or a.get("id", ""))
+                                   for a in reversed(top_imp)]},
                 "xAxis": {"type": "value"},
                 "series": [{"type": "bar", "data": [
                     {"value": a["impact"],

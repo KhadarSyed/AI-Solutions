@@ -6,6 +6,24 @@ from collections import Counter, defaultdict
 from app.analytics.scoring import gauge_rating, pr_impact
 
 
+def _attribute(a: dict, brand: str, competitors: list[str]) -> str | None:
+    """Attribute an article to the brand or a specific competitor. Prefers the
+    subject_brand stamped at collection (query group); falls back to a mention
+    match so articles collected before attribution still count."""
+    subject = (a.get("subject_brand") or "").strip()
+    if subject == brand:
+        return brand
+    if subject in competitors:
+        return subject
+    text = (a.get("title", "") + " " + a.get("content", "")).lower()
+    if brand.lower() in text:
+        return brand
+    for c in competitors:
+        if c.lower() in text:
+            return c
+    return None
+
+
 def build(articles: list[dict], brand: str, competitors: list[str]) -> dict:
     scored = [{**a, "pr_impact": pr_impact(a)} for a in articles]
 
@@ -13,19 +31,17 @@ def build(articles: list[dict], brand: str, competitors: list[str]) -> dict:
     total_impact = sum(a["pr_impact"] for a in scored)
     daily_avg = round(total_impact / max(len(days), 1), 2)
 
-    brand_mentions = sum(
-        len((a.get("entities") or {}).get("brand_of_interest", [])) or
-        (1 if brand.lower() in (a.get("title", "") + a.get("content", "")).lower() else 0)
-        for a in articles
-    )
+    # share of voice by collection subject (brand vs each competitor)
     rival_counts: Counter = Counter()
     matrix: dict[str, Counter] = defaultdict(Counter)
+    brand_mentions = 0
     for a in articles:
-        mentioned = set((a.get("entities") or {}).get("competitors", []))
-        for c in competitors:
-            if c in mentioned or c.lower() in (a.get("title", "") + a.get("content", "")).lower():
-                rival_counts[c] += 1
-                matrix[c][a.get("xai_sentiment", "NEU")] += 1
+        who = _attribute(a, brand, competitors)
+        if who == brand:
+            brand_mentions += 1
+        elif who in competitors:
+            rival_counts[who] += 1
+            matrix[who][a.get("xai_sentiment", "NEU")] += 1
     voice_total = brand_mentions + sum(rival_counts.values())
 
     tiers = Counter(("tier1" if a.get("tier1") else f"w{a.get('reach_weight', 1)}")
@@ -50,8 +66,9 @@ def build(articles: list[dict], brand: str, competitors: list[str]) -> dict:
         ],
         "outlet_tiers": dict(tiers),
         "top_impact_articles": sorted(
-            ({"id": a["id"], "title": a.get("title", ""), "impact": a["pr_impact"],
-              "sentiment": a.get("xai_sentiment")} for a in scored),
+            ({"id": a["id"], "title": a.get("title", ""),
+              "publisher_name": a.get("publisher_name", "") or a.get("publisher_domain", ""),
+              "impact": a["pr_impact"], "sentiment": a.get("xai_sentiment")} for a in scored),
             key=lambda x: -abs(x["impact"]),
         )[:10],
     }

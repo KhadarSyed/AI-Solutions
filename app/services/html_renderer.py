@@ -117,16 +117,29 @@ function renderGeo(el, counts, dark){
   const proj = d3.geoNaturalEarth1().fitSize([w,h], countries);
   const path = d3.geoPath(proj);
   const max = Math.max(1,...Object.values(counts));
-  const color = d3.scaleSequential(dark?d3.interpolateBlues:d3.interpolateBlues).domain([0,max]);
-  const A2={}; // iso numeric->alpha2 not embedded; match by name fallback
+  const color = d3.scaleSequential(dark?d3.interpolateGnBu:d3.interpolateBlues).domain([0,max]);
+  function countFor(f){
+    const n=(f.properties.name||'');
+    const hit=Object.keys(counts).find(k=>n.toLowerCase().startsWith(countryName(k).toLowerCase()));
+    return hit?counts[hit]:0;
+  }
+  let tip=document.querySelector('.geo-tip');
+  if(!tip){ tip=document.createElement('div'); tip.className='geo-tip';
+    tip.style.cssText='position:fixed;pointer-events:none;z-index:9999;opacity:0;'
+      +'background:rgba(15,23,42,.94);color:#fff;padding:6px 10px;border-radius:8px;'
+      +'font:12px/1.3 system-ui,sans-serif;box-shadow:0 4px 14px rgba(0,0,0,.3);'
+      +'transition:opacity .12s';
+    document.body.appendChild(tip); }
   svg.selectAll('path').data(countries.features).join('path')
     .attr('d',path)
-    .attr('fill',f=>{
-       const n=(f.properties.name||'');
-       const hit=Object.keys(counts).find(k=>n.toLowerCase().startsWith(countryName(k).toLowerCase()));
-       return hit?color(counts[hit]):(dark?'#1e293b':'#E2E5EA');})
+    .attr('fill',f=>{const c=countFor(f); return c?color(c):(dark?'#1e293b':'#E2E5EA');})
     .attr('stroke',dark?'#334155':'#cbd5e1').attr('stroke-width',.4)
-    .append('title').text(f=>f.properties.name);
+    .style('cursor','pointer')
+    .on('mousemove',(ev,f)=>{const c=countFor(f);
+        tip.innerHTML='<b>'+(f.properties.name||'')+'</b>: '+c+' article'+(c===1?'':'s');
+        tip.style.left=(ev.clientX+14)+'px'; tip.style.top=(ev.clientY+14)+'px';
+        tip.style.opacity=1;})
+    .on('mouseleave',()=>{tip.style.opacity=0;});
 }
 function countryName(code){
   const m={US:'United States',GB:'United Kingdom',DE:'Germany',FR:'France',IN:'India',
