@@ -39,6 +39,41 @@ class DomainFacts(BaseModel):
     evidence: str = Field(default="", description="Short quote or page fact supporting the country")
 
 
+class _PublisherCountry(BaseModel):
+    domain: str
+    country: str = Field(description='ISO-3166 alpha-2, or "all" if genuinely unknown')
+
+
+class _PublisherCountries(BaseModel):
+    items: list[_PublisherCountry]
+
+
+async def countries_from_knowledge(pairs: list[tuple[str, str]]) -> dict[str, str]:
+    """One batched call: infer each publisher's HOME country from the model's own
+    knowledge of the outlet (name + domain) — no page fetch. This is what fills
+    country for the many well-known .com publishers whose footers never state it."""
+    if not pairs:
+        return {}
+    listing = "\n".join(f"- {name or domain} ({domain})" for name, domain in pairs)
+    agent = GuardedAgent(
+        purpose="publisher_country", stage="enrich",
+        system_prompt=(
+            "You are given news publishers (name + domain). For each, return its "
+            "HOME/headquarters country as an ISO 3166-1 alpha-2 code using your "
+            "knowledge of the outlet (e.g. The Economic Times→IN, Reuters→GB, "
+            "Sports Illustrated→US, The Straits Times→SG). Return exactly one entry "
+            "per input domain; use \"all\" only when the outlet is genuinely unknown."
+        ),
+        output_type=_PublisherCountries, temperature=0.0, cacheable=True,
+    )
+    try:
+        res = await agent.run("Publishers:\n" + listing)
+    except Exception as exc:
+        log.warning("enricher.knowledge_failed", error=str(exc)[:150])
+        return {}
+    return {i.domain: i.country for i in res.items if i.country}
+
+
 def country_from_tld(domain: str) -> str | None:
     d = domain.lower()
     for suffix, code in sorted(_CCTLD.items(), key=lambda kv: -len(kv[0])):
@@ -172,6 +207,21 @@ async def enrich_articles(articles: list[RawArticle], project_id: str) -> dict:
         if not a.author and facts.author_desk:
             a.author = facts.author_desk
             stats["authors_filled"] += 1
+
+    # knowledge-based country fill — the model knows most outlets' home country
+    # without a page fetch; this is the primary source of country coverage
+    unresolved = {}
+    for a in articles:
+        if a.country in ("", "all") and a.publisher_domain:
+            unresolved.setdefault(a.publisher_domain, a.publisher_name or a.publisher_domain)
+    if unresolved:
+        known = await countries_from_knowledge([(n, d) for d, n in unresolved.items()])
+        for a in articles:
+            if a.country in ("", "all"):
+                c = known.get(a.publisher_domain)
+                if c and c != "all":
+                    a.country = c
+                    stats["countries_resolved"] += 1
 
     # article-page byline pass for still-missing authors (cheap metadata extract)
     missing_author = [a for a in articles if not a.author][:10]
