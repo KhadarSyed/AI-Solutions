@@ -184,6 +184,22 @@ async def resolve_domain(domain: str, project_id: str) -> DomainFacts:
 
 async def enrich_articles(articles: list[RawArticle], project_id: str) -> dict:
     """Fill missing country/author in place. Fetch budget applies per unique domain."""
+    # first, resolve news.google.com redirects to the real outlet (headless browser
+    # follows Google's JS) so the real domain shows AND the article page becomes
+    # byline-fetchable below. Publisher NAME already comes from the RSS <source>.
+    gnews_resolved = 0
+    gnews_articles = [a for a in articles
+                      if a.publisher_domain == "news.google.com" and a.url]
+    if gnews_articles:
+        from app.tools.scraping.gnews import resolve_batch_via_browser
+
+        mapping = await resolve_batch_via_browser([a.url for a in gnews_articles])
+        for a in gnews_articles:
+            hit = mapping.get(a.url)
+            if hit:
+                a.url, a.publisher_domain = hit
+                gnews_resolved += 1
+
     need = [a for a in articles if a.country in ("", "all") or not a.author]
     domains = list({a.publisher_domain for a in need if a.publisher_domain})
     budget = domains[:MAX_DOMAIN_FETCHES_PER_RUN]
@@ -198,7 +214,7 @@ async def enrich_articles(articles: list[RawArticle], project_id: str) -> dict:
     await asyncio.gather(*(one(d) for d in budget))
 
     stats = {"domains_considered": len(domains), "domains_fetched": len(budget),
-             "countries_resolved": 0, "authors_filled": 0}
+             "countries_resolved": 0, "authors_filled": 0, "gnews_resolved": gnews_resolved}
     for a in articles:
         facts = resolved.get(a.publisher_domain)
         if not facts:

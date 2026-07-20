@@ -7,6 +7,7 @@ inside it. We extract the first http(s) URL we can find; if that fails we fall
 back to following the redirect. Best-effort — returns None when we can't resolve.
 """
 import base64
+import contextlib
 import re
 from urllib.parse import urlparse
 
@@ -60,3 +61,47 @@ async def resolve_via_redirect(url: str, timeout: float = 8.0) -> tuple[str, str
     except Exception:
         return None
     return None
+
+
+async def resolve_batch_via_browser(urls: list[str], budget: int = 12,
+                                    concurrency: int = 3) -> dict[str, tuple[str, str]]:
+    """Resolve Google-News URLs to the real outlet by loading them in headless
+    Chromium (Google's own JS redirects to the article) — the reliable method the
+    offline decode + plain redirect can't do. Returns {orig_url: (real_url, domain)}.
+    Budgeted + concurrency-capped because each navigation is a real page load."""
+    import asyncio
+
+    targets = [u for u in dict.fromkeys(urls) if is_gnews_url(u)][:budget]
+    if not targets:
+        return {}
+    try:
+        from playwright.async_api import async_playwright
+    except Exception:
+        return {}
+
+    out: dict[str, tuple[str, str]] = {}
+    sem = asyncio.Semaphore(concurrency)
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(args=["--no-sandbox"])
+
+            async def one(u: str) -> None:
+                async with sem:
+                    page = await browser.new_page()
+                    try:
+                        await page.goto(u, wait_until="domcontentloaded", timeout=20000)
+                        await page.wait_for_timeout(2500)   # let the JS redirect settle
+                        final = page.url
+                        if final.startswith("http") and _GNEWS_HOST not in final:
+                            out[u] = (final, _domain(final))
+                    except Exception:
+                        pass
+                    finally:
+                        with contextlib.suppress(Exception):
+                            await page.close()
+
+            await asyncio.gather(*(one(u) for u in targets))
+            await browser.close()
+    except Exception:
+        return out
+    return out
