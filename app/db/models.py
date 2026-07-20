@@ -68,6 +68,9 @@ class Project(Base, TimestampMixin):
     stakeholder_emails: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    competitors: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
 
 
