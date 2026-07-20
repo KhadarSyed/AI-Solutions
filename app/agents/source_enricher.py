@@ -222,9 +222,9 @@ async def enrich_articles(articles: list[RawArticle], project_id: str) -> dict:
         known = await countries_from_knowledge(list(unresolved.values()))
         for a in articles:
             if a.country in ("", "all"):
-                c = known.get(_label(a).lower())
-                if c and c != "all":
-                    a.country = c
+                c = (known.get(_label(a).lower()) or "").strip()
+                if c and c.lower() != "all":
+                    a.country = c.upper() if len(c) == 2 else c
                     stats["countries_resolved"] += 1
 
     # article-page byline pass for still-missing authors (cheap metadata extract)
