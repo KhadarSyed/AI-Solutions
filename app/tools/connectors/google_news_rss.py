@@ -23,10 +23,16 @@ _FEED = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
 
 
 def _entry_to_article(entry, query: str, group: str) -> RawArticle:
+    from app.tools.scraping import gnews
+
     publisher = ""
     if getattr(entry, "source", None) is not None:
         publisher = getattr(entry.source, "title", "") or ""
     link = getattr(entry, "link", "") or ""
+    domain = urlparse(link).netloc.removeprefix("www.")
+    decoded = gnews.decode(link)          # offline decode; redirect fallback in orchestrator
+    if decoded:
+        link, domain = decoded
     published: date | None = None
     if getattr(entry, "published_parsed", None):
         published = datetime(*entry.published_parsed[:6]).date()
@@ -38,7 +44,7 @@ def _entry_to_article(entry, query: str, group: str) -> RawArticle:
         publisher_name=publisher,
         title=title,
         content=getattr(entry, "summary", "") or "",
-        publisher_domain=urlparse(link).netloc.removeprefix("www."),
+        publisher_domain=domain,
         published_date=published,
         url=link,
         language="en",
