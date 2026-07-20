@@ -118,26 +118,50 @@ class TavilyConnector(Connector):
 
 
 class ApifyConnector(Connector):
-    """Stub slot — enable by choosing an actor and implementing search()."""
+    """Runs two Apify actors (Google Search Results Scraper + RAG Web Browser)
+    and normalizes their dataset items to RawArticle."""
 
     name = "apify"
     capabilities = Capabilities(max_results=True)
 
     def enabled(self) -> bool:
-        return False  # becomes bool(settings.apify_token) once an actor is wired
+        return bool(get_settings().apify_token)
+
+    async def _run_actor(self, actor: str, query: str, filters: SearchFilters) -> list[dict]:
+        s = get_settings()
+        url = (f"https://api.apify.com/v2/acts/{actor.replace('/', '~')}"
+               "/run-sync-get-dataset-items")
+        body = {"queries": query, "query": query,
+                "maxResults": filters.max_results,
+                "maxRequestsPerCrawl": filters.max_results}
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(url, params={"token": s.apify_token}, json=body)
+            resp.raise_for_status()
+            data = resp.json()
+        return data if isinstance(data, list) else data.get("items", [])
 
     async def search(self, queries: list[str], filters: SearchFilters) -> ConnectorResult:
-        return ConnectorResult(errors=["apify connector not yet implemented"])
+        result = ConnectorResult()
+        s = get_settings()
 
+        async def one(actor: str, query: str) -> None:
+            try:
+                for item in await self._run_actor(actor, query, filters):
+                    url = item.get("url") or item.get("loadedUrl") or item.get("link", "")
+                    if not url:
+                        continue
+                    result.articles.append(RawArticle(
+                        publisher_name=item.get("source") or item.get("displayedUrl", "") or "",
+                        title=item.get("title", "") or "",
+                        content=(item.get("description") or item.get("text")
+                                 or item.get("snippet", "") or ""),
+                        publisher_domain=urlparse(url).netloc.removeprefix("www."),
+                        url=url, source=self.name, medium="news", original_query=query,
+                    ))
+            except Exception as exc:
+                result.errors.append(f"{self.name}:{query}: {exc}")
 
-class XPozConnector(Connector):
-    """Reserved stub — service definition pending user confirmation."""
-
-    name = "xpoz"
-    capabilities = Capabilities()
-
-    def enabled(self) -> bool:
-        return False
-
-    async def search(self, queries: list[str], filters: SearchFilters) -> ConnectorResult:
-        return ConnectorResult(errors=["xpoz connector is a reserved stub"])
+        tasks = [one(a, q) for q in queries
+                 for a in (s.apify_actor_search, s.apify_actor_rag)]
+        await asyncio.gather(*tasks)
+        return result

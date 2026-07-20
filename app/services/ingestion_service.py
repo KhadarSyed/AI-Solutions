@@ -20,9 +20,9 @@ from app.tools.connectors.keyed import (
     ApifyConnector,
     SerpApiConnector,
     TavilyConnector,
-    XPozConnector,
 )
 from app.tools.connectors.searxng import SearxngConnector
+from app.tools.connectors.xpoz import XPozConnector
 
 log = get_logger(__name__)
 

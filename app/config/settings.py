@@ -50,8 +50,12 @@ class Settings(BaseSettings):
     serpapi_api_key: str = ""
     tavily_api_key: str = ""
     apify_token: str = ""
+    apify_actor_search: str = "apify/google-search-scraper"
+    apify_actor_rag: str = "apify/rag-web-browser"
     xpoz_api_key: str = ""
+    xpoz_mcp_url: str = "https://mcp.xpoz.ai/mcp"
     similarweb_api_key: str = ""
+    source_concurrency: int = 8
 
     # Execution
     max_concurrent_runs: int = 4
