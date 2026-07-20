@@ -135,39 +135,84 @@ class TeamsMcpAdapter(ChannelAdapter):
             })
         log.info("teams.sent", kind=kind)
 
+    # Files above this raw size are uploaded to OneDrive and attached by
+    # reference (attachItems) — inlining them base64 overflows Graph's message
+    # size limit and the POST 413s (the dashboard.html is ~1.4 MB).
+    INLINE_MAX = 600_000
+
     async def _send_mail(self, address: dict, message: OutboundMessage) -> None:
         """Send from the agent's real mailbox via Graph. When we have the
         initiator's original message id we reply IN-THREAD (mail_reply) so the
         whole exchange — collected CSV, tagged CSV, dashboard — stays in one
-        thread; only a cold, thread-less send uses mail_send."""
+        thread; only a cold, thread-less send uses mail_send. Large files go to
+        OneDrive and attach by reference so the message never 413s."""
         import base64
 
-        atts = None
-        if message.attachments:
-            atts = [
-                {"name": name, "contentType": mime or "application/octet-stream",
-                 "contentBytesBase64": base64.b64encode(data).decode()}
-                for name, data, mime in message.attachments
-            ]
+        inline: list[dict] = []
+        attach_items: list[dict] = []
+        for name, data, mime in message.attachments:
+            if len(data) <= self.INLINE_MAX:
+                inline.append({"name": name,
+                               "contentType": mime or "application/octet-stream",
+                               "contentBytesBase64": base64.b64encode(data).decode()})
+                continue
+            item = await self._upload_to_drive(name, data)
+            if item:
+                attach_items.append(item)
+            else:  # upload failed — inline as a last resort (may 413, but don't drop)
+                inline.append({"name": name,
+                               "contentType": mime or "application/octet-stream",
+                               "contentBytesBase64": base64.b64encode(data).decode()})
 
         msg_id = address.get("message_id")
         if msg_id:
             args: dict = {"messageId": msg_id, "comment": message.text}
-            if atts:
-                args["attachments"] = atts
-            await self._call("mail_reply", args, read_timeout=120.0)
-            log.info("teams.sent", kind="email", mode="reply",
-                     attachments=len(message.attachments))
-            return
+        else:
+            args = {"to": address.get("to"),
+                    "subject": message.subject or "PR Intelligence Agent",
+                    "body": message.text, "contentType": "Text"}
+        if inline:
+            args["attachments"] = inline
+        if attach_items:
+            args["attachItems"] = attach_items
 
-        args = {"to": address.get("to"),
-                "subject": message.subject or "PR Intelligence Agent",
-                "body": message.text, "contentType": "Text"}
-        if atts:
-            args["attachments"] = atts
-        await self._call("mail_send", args, read_timeout=120.0)
-        log.info("teams.sent", kind="email", mode="send", to=address.get("to"),
-                 attachments=len(message.attachments))
+        tool = "mail_reply" if msg_id else "mail_send"
+        await self._call(tool, args, read_timeout=180.0)
+        log.info("teams.sent", kind="email", mode="reply" if msg_id else "send",
+                 inline=len(inline), drive=len(attach_items))
+
+    async def _upload_to_drive(self, name: str, data: bytes) -> dict | None:
+        """Upload bytes to the agent's OneDrive via a Graph upload session (no
+        base64 through the size-limited MCP POST) and return an attachItems entry
+        {itemId, driveId, name}."""
+        import json as _json
+
+        try:
+            res = await self._call("drive_request_upload", {"name": name},
+                                    read_timeout=90.0)
+            info = _json.loads(res.get("text", "{}"))
+            upload_url = info.get("uploadUrl")
+            if not upload_url:
+                return None
+
+            import httpx
+
+            size = len(data)
+            async with httpx.AsyncClient(timeout=180) as client:
+                put = await client.put(
+                    upload_url, content=data,
+                    headers={"Content-Range": f"bytes 0-{size - 1}/{size}"},
+                )
+            put.raise_for_status()
+            item = put.json()
+            item_id = item.get("id")
+            drive_id = info.get("driveId") or (item.get("parentReference") or {}).get("driveId")
+            if item_id:
+                log.info("teams.drive_uploaded", name=name, bytes=size)
+                return {"itemId": item_id, "driveId": drive_id, "name": name}
+        except Exception as exc:
+            log.warning("teams.drive_upload_failed", name=name, error=_unwrap(exc)[:200])
+        return None
 
     async def _upload_attachments(self, attachments) -> list[tuple[str, str]]:
         links: list[tuple[str, str]] = []
