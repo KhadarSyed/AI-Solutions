@@ -17,6 +17,7 @@ htmlcov/
 # Local data / outputs
 data/local/
 output/
+reports/
 *.log
 
 # LangGraph
