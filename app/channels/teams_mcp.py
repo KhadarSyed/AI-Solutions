@@ -135,10 +135,10 @@ class TeamsMcpAdapter(ChannelAdapter):
             })
         log.info("teams.sent", kind=kind)
 
-    # Files above this raw size are uploaded to OneDrive and attached by
-    # reference (attachItems) — inlining them base64 overflows Graph's message
-    # size limit and the POST 413s (the dashboard.html is ~1.4 MB).
-    INLINE_MAX = 600_000
+    # The teams-mcp /mcp POST body limit is low (~100 KB): a single ~90 KB CSV
+    # sends, but two files (154 KB) 413. So anything but a tiny file is uploaded
+    # to OneDrive and attached by reference (attachItems), keeping the POST small.
+    INLINE_MAX = 40_000
 
     async def _send_mail(self, address: dict, message: OutboundMessage) -> None:
         """Send from the agent's real mailbox via Graph. When we have the
