@@ -42,10 +42,9 @@ async def publish_dashboard(brand: str, task_id: str, html: bytes) -> str | None
         if resp.status_code >= 300:
             log.info("vercel.publish_failed", status=resp.status_code, body=resp.text[:200])
             return None
-        data = resp.json()
-        aliases = data.get("alias") or []
-        host = (aliases[0] if aliases else None) or data.get("url") or f"{name}.vercel.app"
-        url = f"https://{host}"
+        # the deployment-specific *.-team.vercel.app URL is SSO-gated; the project's
+        # canonical production alias {name}.vercel.app is the public one
+        url = f"https://{name}.vercel.app"
         log.info("vercel.published", name=name, url=url)
         return url
     except Exception as exc:

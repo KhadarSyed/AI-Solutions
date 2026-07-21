@@ -19,8 +19,18 @@ def register_adapter(channel: str, adapter: ChannelAdapter) -> None:
     _adapters[channel] = adapter
 
 
+def _task_subject(state: PipelineState) -> str:
+    """ONE subject per task — every message (acks, gates, status, completion) shares
+    it so the whole task collapses into a single email thread. The Task-ID tag also
+    keeps different tasks (BeOne vs Trane vs a repeat) in separate threads."""
+    tid = state.get("task_id") or (state.get("origin_address") or {}).get("task_id")
+    brand = state.get("brand") or "Monitoring"
+    base = f"{brand} Monitoring"
+    return f"[{tid}] {base}" if tid else base
+
+
+# kept for callers that still pass an explicit base; task threads use _task_subject
 def _subject(state: PipelineState, base: str) -> str:
-    """Prefix a subject with the Task-ID tag so each task keeps its own thread."""
     tid = state.get("task_id") or (state.get("origin_address") or {}).get("task_id")
     return f"[{tid}] {base}" if tid else base
 
@@ -41,10 +51,10 @@ async def notify_agent(state: PipelineState, agent: str, phase: str, message: st
     if adapter is None:
         return
     icon = _AGENT_ICON.get(agent, "•")
-    subject = _subject(state, f"{state.get('brand', '')} — {agent} Agent {phase}".strip(" —"))
     with contextlib.suppress(Exception):
         await adapter.send(state.get("origin_address", {}),
-                           OutboundMessage(subject=subject, text=f"{icon} {message}"))
+                           OutboundMessage(subject=_task_subject(state),
+                                           text=f"{icon} {agent} Agent {phase} — {message}"))
 
 
 async def _deliver(state: PipelineState, event: str, message: str,
@@ -97,8 +107,7 @@ async def notify_gate(state: PipelineState, *, gate: int, csv_key: str, message:
             log.info("notifier.csv_load_failed", error=str(exc)[:120])
 
     await _deliver(state, "notification_sent", message, attachments,
-                   subject=_subject(state, f"{state.get('brand', 'Monitoring')} — "
-                                    f"review needed (Gate {gate})"))
+                   subject=_task_subject(state))
 
 
 async def notify_progress(state: PipelineState, message: str) -> None:
@@ -174,4 +183,4 @@ async def notify_complete(state: PipelineState) -> None:
                                 "application/vnd.openxmlformats-officedocument."
                                 "wordprocessingml.document"))
     await _deliver(state, "result_delivered", message, attachments,
-                   subject=_subject(state, f"{brand} — media analysis complete"))
+                   subject=_task_subject(state))

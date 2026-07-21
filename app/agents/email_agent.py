@@ -246,7 +246,7 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
         tid = result["task_id"]
         with contextlib.suppress(Exception):
             await adapter.send(inbound.address, OutboundMessage(
-                subject=f"[{tid}] {intent.brand} Monitoring — started",
+                subject=f"[{tid}] {intent.brand} Monitoring",
                 text=(f"Task {tid} started for {intent.brand}. The WebSearch Agent is "
                       "collecting coverage now; I'll email the collected articles here for "
                       f"your review shortly. Keep [{tid}] in the subject on any reply."),
