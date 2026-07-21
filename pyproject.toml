@@ -28,6 +28,9 @@ dependencies = [
     # Memory
     # 2.x dropped OSS graph memory — 1.x is the last line with Neo4j graph support
     "mem0ai[graph]>=1.0,<2.0",
+    # mem0's azure_openai LLM module hard-imports azure.identity at load time; the
+    # extraction LLM runs on Azure gpt-4o (api-key auth), so ship the SDK to satisfy it
+    "azure-identity>=1.19",
     # Retrieval / rerank
     "flashrank>=0.2",
     # Local ONNX embeddings (no external API) — semantic recall without Azure

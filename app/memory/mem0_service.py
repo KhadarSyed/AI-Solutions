@@ -5,13 +5,18 @@ memory taxonomy type and fires the observability hook so the execution layer
 can stream STORE/RECALL events per agent.
 """
 
+import os
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
 from functools import lru_cache
 from urllib.parse import urlparse
 
-from app.config.settings import get_settings
-from app.observability.logging import get_logger
+# Mem0 ships PostHog analytics on by default (background network + noisy "multiple
+# clients" warnings); this is a private stack, so opt out before Mem0 is imported.
+os.environ.setdefault("MEM0_TELEMETRY", "False")
+
+from app.config.settings import get_settings  # noqa: E402
+from app.observability.logging import get_logger  # noqa: E402
 
 log = get_logger(__name__)
 
@@ -47,9 +52,19 @@ async def _emit(op: str, agent: str, mtype: str, scope: str, summary: str) -> No
 @lru_cache
 def _memory():
     from mem0 import AsyncMemory  # heavy import — deferred
+    from mem0.utils.factory import EmbedderFactory
+
+    # Mem0's stock fastembed embedder returns a numpy ndarray that its pgvector store
+    # can't adapt; point the provider at our list-returning subclass instead.
+    EmbedderFactory.provider_to_class["fastembed"] = "app.memory.embedders.ListFastEmbed"
 
     s = get_settings()
     db = urlparse(s.database_url.replace("postgresql+asyncpg", "postgresql"))
+    # Embeddings run LOCALLY (fastembed / bge-small, 384-dim) — the same backend as the
+    # article RAG store. Mem0 must not depend on the Azure embedding deployment: that
+    # deployment 404s here (the reason retrieval moved to local embeddings), and Mem0's
+    # azure_openai embedder also hard-imports azure.identity, which we don't ship. The
+    # extraction LLM stays on Azure gpt-4o — the one chat model that works in this env.
     config = {
         "vector_store": {
             "provider": "pgvector",
@@ -60,7 +75,7 @@ def _memory():
                 "port": db.port or 5432,
                 "dbname": db.path.lstrip("/"),
                 "collection_name": "mem0_memories",
-                "embedding_model_dims": 1536,
+                "embedding_model_dims": s.local_embedding_dim,
                 "hnsw": True,
             },
         },
@@ -86,15 +101,10 @@ def _memory():
             },
         },
         "embedder": {
-            "provider": "azure_openai",
+            "provider": "fastembed",
             "config": {
-                "model": s.azure_openai_embed_deployment,
-                "azure_kwargs": {
-                    "api_key": s.azure_openai_api_key,
-                    "azure_deployment": s.azure_openai_embed_deployment,
-                    "azure_endpoint": s.azure_openai_endpoint,
-                    "api_version": s.azure_openai_api_version,
-                },
+                "model": s.local_embedding_model,
+                "embedding_dims": s.local_embedding_dim,
             },
         },
     }
