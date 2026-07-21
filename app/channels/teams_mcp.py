@@ -166,11 +166,13 @@ class TeamsMcpAdapter(ChannelAdapter):
 
         msg_id = address.get("message_id")
         if msg_id:
-            args: dict = {"messageId": msg_id, "comment": message.text}
+            # reply comment renders as HTML in-thread when we have a styled body
+            args: dict = {"messageId": msg_id, "comment": message.html or message.text}
         else:
             args = {"to": address.get("to"),
                     "subject": message.subject or "PR Intelligence Agent",
-                    "body": message.text, "contentType": "Text"}
+                    "body": message.html or message.text,
+                    "contentType": "HTML" if message.html else "Text"}
         if inline:
             args["attachments"] = inline
         if attach_items:
