@@ -503,11 +503,25 @@ function chatMd(src){
   charts.forEach(function(j,i){s=s.replace('C'+i+'','<div class="chat-echarts" data-opt="'+chatEsc(j).replace(/"/g,'&quot;')+'"></div>');});
   return s;
 }
+// Neutralize any HTML/JS-capable fields in LLM-produced ECharts JSON (defense-in-depth):
+// drop every formatter/rich, and force richText tooltips so no field is rendered as HTML.
+function chatSafeOpt(o){
+  if(Array.isArray(o)){o.forEach(chatSafeOpt);return o;}
+  if(o&&typeof o==='object'){
+    if(o.tooltip&&typeof o.tooltip==='object'){o.tooltip.renderMode='richText';}
+    for(var k in o){
+      if(k==='formatter'||k==='rich'){delete o[k];continue;}
+      if(k==='renderMode'){o[k]='richText';continue;}
+      chatSafeOpt(o[k]);
+    }
+  }
+  return o;
+}
 function chatInitCharts(el){
   if(!window.echarts)return;
   el.querySelectorAll('.chat-echarts').forEach(function(d){
     try{var raw=d.getAttribute('data-opt').replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
-      var opt=JSON.parse(raw); d.style.height='240px'; var ch=echarts.init(d);
+      var opt=chatSafeOpt(JSON.parse(raw)); d.style.height='240px'; var ch=echarts.init(d);
       opt.backgroundColor='transparent'; ch.setOption(opt);
       window.addEventListener('resize',function(){ch.resize();});}catch(e){}
   });
