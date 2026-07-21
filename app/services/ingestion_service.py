@@ -83,34 +83,47 @@ def dedupe(articles: list[RawArticle]) -> tuple[list[RawArticle], dict[str, list
     return list(by_fp.values()), syndication
 
 
-async def relevancy_filter(
-    articles: list[RawArticle], brand: str, queries: list[str], threshold: float = 0.35
-) -> list[RawArticle]:
-    """Embedding-cosine cut against the brand/query centroid. Skipped (all kept)
-    when embedding keys are absent so free-tier runs still work."""
-    s = get_settings()
-    if not (s.azure_openai_api_key and s.azure_openai_endpoint) or not articles:
-        return articles
+def _cos(u: list[float], v: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(u, v, strict=True))
+    nu = sum(x * x for x in u) ** 0.5
+    nv = sum(x * x for x in v) ** 0.5
+    return dot / (nu * nv) if nu and nv else 0.0
 
-    from app.llm_gateway.embeddings import embed, embed_one
+
+async def relevancy_filter(
+    articles: list[RawArticle], brand: str, queries: list[str],
+    threshold: float | None = None,
+) -> list[RawArticle]:
+    """Drop off-topic coverage with an embedding-cosine cut. Each article is scored against
+    a company-framed anchor for the SUBJECT it was collected for (brand or the specific
+    competitor) — never a mixed centroid — so 'Amway Stadium' football doesn't ride in on
+    the presence of 'Amway' in the anchor, and an NHL/celebrity 'BeOne' hit is dropped from
+    the brand's coverage. Runs whenever embeddings are available (any backend); a hard
+    embedding failure leaves collection intact (all kept)."""
+    from app.llm_gateway.embeddings import embed, embeddings_available
+
+    if not articles or not await embeddings_available():
+        return articles
+    if threshold is None:
+        threshold = get_settings().relevancy_threshold
+
+    def _anchor_text(subject: str) -> str:
+        s = (subject or brand or "").strip()
+        return f"{s} — the company/organization: business, product, research and industry news"
 
     try:
-        anchor = await embed_one(f"{brand} — " + "; ".join(queries[:10]))
+        subjects = sorted({(a.subject_brand or brand or "").strip() for a in articles})
+        anchor_vecs = dict(zip(subjects, await embed([_anchor_text(s) for s in subjects]),
+                               strict=True))
         texts = [f"{a.title}. {a.content[:400]}" for a in articles]
         vectors = await embed(texts)
     except Exception as exc:
-        # embeddings are optional here — a bad deployment/key must not fail collection
         log.warning("ingestion.relevancy_skipped", error=str(exc)[:160])
         return articles
 
-    def cos(u: list[float], v: list[float]) -> float:
-        dot = sum(x * y for x, y in zip(u, v, strict=True))
-        nu = sum(x * x for x in u) ** 0.5
-        nv = sum(x * x for x in v) ** 0.5
-        return dot / (nu * nv) if nu and nv else 0.0
-
-    kept = [a for a, vec in zip(articles, vectors, strict=True) if cos(anchor, vec) >= threshold]
-    log.info("ingestion.relevancy", before=len(articles), after=len(kept))
+    kept = [a for a, vec in zip(articles, vectors, strict=True)
+            if _cos(anchor_vecs[(a.subject_brand or brand or "").strip()], vec) >= threshold]
+    log.info("ingestion.relevancy", before=len(articles), after=len(kept), threshold=threshold)
     return kept
 
 

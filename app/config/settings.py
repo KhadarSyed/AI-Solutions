@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     # never handed barely-relevant articles. Tunable per observed score distribution.
     retrieval_min_rerank: float = 0.10
 
+    # Ingestion relevancy cut — drop articles whose embedding cosine to their subject's
+    # company-framed anchor is below this. Calibrated on a real BeOne corpus (bge-small):
+    # <0.50 is off-topic noise (sports/celebrity/scam/venue); >=0.50 is company/industry news.
+    relevancy_threshold: float = 0.50
+
     # Guardrails
     nemo_rails_enabled: bool = True  # effective only when Azure OpenAI keys are present
 
