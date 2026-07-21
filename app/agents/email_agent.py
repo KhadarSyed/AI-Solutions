@@ -244,6 +244,37 @@ def _merge_cc(*lists) -> list[str]:
     return seen
 
 
+async def _thread_reply(inbound: ChannelInbound, adapter, text: str, *,
+                        run=None, subject: str | None = None, html: str = "") -> None:
+    """Reply on the task's ONE conversation with the full task identity attached.
+
+    Every acknowledgement and answer the email agent sends is threaded and CC'd exactly
+    like the pipeline's stage emails: it carries the task anchor (the run's message id,
+    or the message being replied to), the Task ID, the origin email address, and the task
+    CC (settings always-CC + the run's persisted CC + this message's CC). This is what
+    keeps Task + Message-id + email address in context so the whole task is tracked in a
+    single thread through completion."""
+    from app.channels.notifier import _send_threaded, _task_cc
+
+    base = dict((run.origin_address if run is not None else None) or inbound.address or {})
+    base.setdefault("kind", (inbound.address or {}).get("kind", "email"))
+    base.setdefault("to", (inbound.address or {}).get("to"))
+    anchor = ((inbound.address or {}).get("message_id")      # reply under the user's message
+              or base.get("message_id") or base.get("thread_msg_id"))  # else the task anchor
+    if anchor:
+        base["message_id"] = anchor
+    base["cc"] = _merge_cc(base.get("cc", []), getattr(inbound, "cc", []),
+                           _parse_cc(inbound.text))
+    state = {"origin_channel": inbound.channel, "origin_address": base}
+    if run is not None:
+        state["run_id"] = str(run.id)
+        state["task_id"] = base.get("task_id")
+    cc = await _task_cc(state)
+    with contextlib.suppress(Exception):
+        await _send_threaded(state, adapter, OutboundMessage(
+            subject=subject or f"Re: {inbound.subject}", text=text, html=html, cc=cc))
+
+
 async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> dict:
     """Create a session for the brand and launch the pipeline on the origin channel,
     so both human gates come back to wherever the request arrived."""
@@ -308,13 +339,11 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
     if intent.kind == "start_run" and run is None:
         result = await _start_run(project, intent.brand, inbound)
         tid = result["task_id"]
-        with contextlib.suppress(Exception):
-            await adapter.send(inbound.address, OutboundMessage(
-                subject=f"[{tid}] {intent.brand} Monitoring",
-                text=(f"Task {tid} started for {intent.brand}. The WebSearch Agent is "
-                      "collecting coverage now; I'll email the collected articles here for "
-                      f"your review shortly. Keep [{tid}] in the subject on any reply."),
-            ))
+        await _thread_reply(
+            inbound, adapter, subject=f"[{tid}] {intent.brand} Monitoring",
+            text=(f"Task {tid} started for {intent.brand}. The WebSearch Agent is "
+                  "collecting coverage now; I'll email the collected articles here for "
+                  f"your review shortly. Keep [{tid}] in the subject on any reply."))
         return {"handled": True, "action": "start_run", **result}
 
     if intent.kind == "gate_decision" and run is not None:
@@ -326,13 +355,11 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
         if not token_in_text(str(run.id), thread_text):
             log.warning("inbound.missing_resume_token", run_id=str(run.id),
                         sender=inbound.sender)
-            with contextlib.suppress(Exception):
-                await adapter.send(inbound.address, OutboundMessage(
-                    subject=f"Re: {inbound.subject}",
-                    text=("I couldn't verify this reply against the pending review "
-                          "(missing the reference code from the original message). "
-                          "Please reply to that message so the reference is preserved."),
-                ))
+            await _thread_reply(
+                inbound, adapter, run=run,
+                text=("I couldn't verify this reply against the pending review "
+                      "(missing the reference code from the original message). "
+                      "Please reply to that message so the reference is preserved."))
             return {"handled": False, "reason": "resume token missing/invalid"}
 
         decision = intent.gate_decision or "approved"
@@ -363,29 +390,21 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
                         resume_payload["monitoring_csv_key"] = key
                     break
         await get_run_manager().resume(str(run.id), resume_payload)
-        with contextlib.suppress(Exception):
-            await adapter.send(inbound.address, OutboundMessage(
-                subject=f"Re: {inbound.subject}",
-                text=(f"Thanks — recorded your '{decision}'. "
-                      + ("Continuing the pipeline now." if decision == "approved"
-                         else "Re-running with your changes.")),
-            ))
+        await _thread_reply(
+            inbound, adapter, run=run,
+            text=(f"Thanks — recorded your '{decision}'. "
+                  + ("Continuing the pipeline now." if decision == "approved"
+                     else "Re-running with your changes.")))
         return {"handled": True, "action": f"gate_{decision}", "run_id": str(run.id)}
 
     # "list / send my reports" → the report archive (before the grounded Q&A path)
     if _REPORTS_RE.search(inbound.text):
         listing = await _reports_reply(project_id, _detect_brand(inbound.text))
-        with contextlib.suppress(Exception):
-            await adapter.send(inbound.address, OutboundMessage(
-                subject=f"Re: {inbound.subject}", text=listing,
-                cc=_merge_cc(getattr(inbound, "cc", []), _parse_cc(inbound.text))))
+        await _thread_reply(inbound, adapter, run=run, text=listing)
         return {"handled": True, "action": "list_reports"}
 
     # question / report / change → grounded reply (change-request re-run is scoped to
     # the pipeline's gate-changes loop; a bare change with no pending gate is answered)
     answer = await _answer_query(project_id, run, inbound)
-    with contextlib.suppress(Exception):
-        await adapter.send(inbound.address, OutboundMessage(
-            subject=f"Re: {inbound.subject}", text=answer,
-        ))
+    await _thread_reply(inbound, adapter, run=run, text=answer)
     return {"handled": True, "action": intent.kind}
