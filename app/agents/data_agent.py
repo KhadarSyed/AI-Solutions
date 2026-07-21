@@ -15,7 +15,7 @@ from app.artifacts.factory import get_artifact_store
 from app.llm_gateway.guarded import GuardedAgent
 from app.observability.logging import get_logger
 from app.orchestration import brain
-from app.retrieval.retriever import retrieve, to_context_block
+from app.retrieval.retriever import RetrievalResult, retrieve, to_context_block
 from app.tools.sandbox.base import ErrorKind
 from app.tools.sandbox.factory import get_sandbox
 
@@ -129,6 +129,31 @@ async def _chart_flow(session_id: str, message: str, request_id: str) -> AsyncIt
                                       f"{MAX_CODE_REGENERATIONS} attempts.", "retryable": False}}
 
 
+async def _session_brand(session_id: str) -> str:
+    import uuid
+
+    from app.db.base import get_sessionmaker
+    from app.db.models import Session as SessionRow
+
+    try:
+        async with get_sessionmaker()() as db:
+            row = await db.get(SessionRow, uuid.UUID(session_id))
+        return (row.config or {}).get("brand", "") if row else ""
+    except Exception:
+        return ""
+
+
+def _refusal_text(brand: str, closest: list) -> str:
+    """Deterministic refusal for the empty-corpus RAG path — no LLM, so no invention."""
+    who = f"the analyzed {brand} articles" if brand else "the analyzed coverage"
+    msg = f"I don't have coverage on that in {who}."
+    if closest:
+        heads = "\n".join(f"• {a.headline}" for a in closest)
+        msg += ("\n\nThe closest coverage I do have is:\n" + heads
+                + "\n\nTry rephrasing toward one of those, or ask me to search the live web.")
+    return msg
+
+
 async def _question_flow(
     project_id: str, session_id: str, message: str, request_id: str
 ) -> AsyncIterator[dict]:
@@ -139,6 +164,9 @@ async def _question_flow(
 
     context_parts: list[str] = []
     citations: list[dict] = []
+    have_memory = have_web = False
+    rag_requested = brain.Route.RAG in decision.routes
+    rag: RetrievalResult = RetrievalResult()
 
     if brain.Route.MEMORY in decision.routes:
         from app.memory.mem0_service import recall
@@ -146,29 +174,46 @@ async def _question_flow(
         try:
             hits = await recall(agent="data_agent", project_id=project_id,
                                 query=decision.search_query or message, limit=8)
-            context_parts.append("From memory:\n" + "\n".join(
-                f"- {h.get('memory', h)}" for h in hits))
+            if hits:
+                context_parts.append("From memory:\n" + "\n".join(
+                    f"- {h.get('memory', h)}" for h in hits))
+                have_memory = True
         except Exception:
             pass
 
-    if brain.Route.RAG in decision.routes:
+    if rag_requested:
         try:
-            articles = await retrieve(project_id=project_id,
-                                      query=decision.search_query or message,
-                                      session_id=session_id, approved_only=True)
+            rag = await retrieve(project_id=project_id,
+                                 query=decision.search_query or message,
+                                 session_id=session_id, approved_only=True)
         except Exception as exc:
             log.warning("data_agent.retrieval_failed", error=str(exc)[:160])
-            articles = []
-        context_parts.append(to_context_block(articles))
-        citations = [{"id": a.article_id, "score": round(a.rerank_score, 3),
-                      "publisher": a.meta.get("publisher", "")} for a in articles]
-        yield {"event": "retrieval", "data": {"count": len(articles), "citations": citations}}
+            rag = RetrievalResult()
+        if rag.articles:
+            context_parts.append(to_context_block(rag.articles))
+            citations = [{"id": a.article_id, "score": round(a.rerank_score, 3),
+                          "publisher": a.meta.get("publisher", "")} for a in rag.articles]
+        yield {"event": "retrieval", "data": {
+            "count": len(rag.articles), "citations": citations,
+            "closest": [a.headline for a in rag.closest] if not rag.articles else []}}
 
     if brain.Route.WEB in decision.routes:
         web = await _web_context(decision.search_query or message)
         if web:
             context_parts.append("From live web search:\n" + web)
+            have_web = True
             yield {"event": "web", "data": {"used": True}}
+
+    have_corpus = bool(rag.articles)
+
+    # Anti-hallucination gate: RAG was asked for, nothing cleared the relevance floor, and
+    # there is no other grounding → refuse deterministically. The answer LLM is never
+    # invoked, so there is no path to invention.
+    if rag_requested and not have_corpus and not (have_memory or have_web):
+        brand = await _session_brand(session_id)
+        yield {"event": "answer", "data": {
+            "text": _refusal_text(brand, rag.closest), "citations": [], "refused": True}}
+        return
 
     answer_agent = GuardedAgent(
         purpose="data_agent_answer", stage="data_agent",
@@ -179,7 +224,7 @@ async def _question_flow(
         ),
         output_type=str, temperature=0.2,
         stakeholder_facing_output=True,
-        require_citations=brain.Route.RAG in decision.routes,
+        require_citations=have_corpus,
     )
     context = "\n\n".join(p for p in context_parts if p) or "No supporting context found."
     try:

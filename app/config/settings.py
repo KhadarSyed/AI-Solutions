@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     llm_batch_size: int = 20
     llm_concurrency: int = 5
 
+    # Retrieval — relevance floor on the FlashRank rerank score. Candidates below this
+    # are treated as "no match" (chat refuses + suggests rephrasing) so the answer LLM is
+    # never handed barely-relevant articles. Tunable per observed score distribution.
+    retrieval_min_rerank: float = 0.10
+
     # Guardrails
     nemo_rails_enabled: bool = True  # effective only when Azure OpenAI keys are present
 
