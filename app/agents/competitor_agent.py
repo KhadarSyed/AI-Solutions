@@ -40,15 +40,33 @@ async def _from_memory(brand: str, project_id: str) -> list[str]:
     return []
 
 
+async def _project_industry(project_id: str) -> str:
+    with contextlib.suppress(Exception):
+        async with get_sessionmaker()() as db:
+            p = await db.get(Project, uuid.UUID(project_id))
+            return (p.industry or "").strip() if p else ""
+    return ""
+
+
 async def _research(brand: str, project_id: str) -> list[str]:
+    # The industry disambiguates same-named companies (e.g. "BeOne" the oncology
+    # biotech vs. an identically-named consumer brand) so the model resolves the RIGHT
+    # entity and its real rivals — no hard-coded competitor list.
+    industry = await _project_industry(project_id)
     agent = GuardedAgent(
         purpose="competitor_research", stage="query_builder",
         system_prompt=(
-            "Name the 5 most direct competitors of the given brand (same industry, "
-            "comparable products). Return brand names only, most direct first."),
+            "You identify direct competitors. Given a brand and its industry, name the 5 "
+            "most direct competitors — companies in the SAME industry with comparable "
+            "products, competing for the same customers. Use the industry to resolve which "
+            "specific company the brand refers to when the name is ambiguous. Return real "
+            "company/brand names only, most direct first."),
         output_type=_Competitors, temperature=0.0, cacheable=True,
     )
-    res = await agent.run(f"Brand: {brand}")
+    ctx = f"Brand: {brand}"
+    if industry:
+        ctx += f"\nIndustry: {industry}"
+    res = await agent.run(ctx)
     return res.competitors
 
 

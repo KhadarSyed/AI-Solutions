@@ -108,10 +108,21 @@ async def _match_project(inbound: ChannelInbound) -> tuple[Project | None, bool]
     async with get_sessionmaker()() as db:
         projects = (await db.execute(select(Project))).scalars().all()
     candidates = _sender_candidates(inbound.sender)
-    for p in projects:
-        stakeholders = {e.lower() for e in (p.stakeholder_emails or [])}
-        if candidates & stakeholders:
-            return p, True
+    # If the same stakeholder owns several projects for a brand (repeat setups over time),
+    # pick the most fully-configured one deterministically — an industry-tagged project
+    # first (so competitor research resolves the right entity), then the one with the most
+    # stakeholders, then the newest — rather than whatever the DB happens to return first.
+    brand = _detect_brand(f"{inbound.subject}\n{inbound.text}")
+    matches = [p for p in projects
+               if candidates & {e.lower() for e in (p.stakeholder_emails or [])}]
+    if brand:
+        branded = [p for p in matches if p.brand_name.lower() == brand.lower()]
+        if branded:
+            matches = branded
+    if matches:
+        matches.sort(key=lambda p: (bool(p.industry), len(p.stakeholder_emails or []),
+                                    p.created_at or 0), reverse=True)
+        return matches[0], True
     return None, False
 
 

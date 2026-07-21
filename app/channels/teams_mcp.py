@@ -109,15 +109,38 @@ class TeamsMcpAdapter(ChannelAdapter):
                     out["text"] += text
             return out
 
-    async def send(self, address: dict, message: OutboundMessage) -> None:
+    @staticmethod
+    def _msg_id(out: dict) -> str | None:
+        """Best-effort extraction of the sent/replied message id from the MCP response,
+        so the notifier can anchor the whole task to one email thread."""
+        import json
+        import re
+
+        text = (out or {}).get("text", "") or ""
+        with contextlib.suppress(Exception):
+            data = json.loads(text)
+            stack = [data]
+            while stack:
+                cur = stack.pop()
+                if isinstance(cur, dict):
+                    for k, v in cur.items():
+                        if k in ("id", "messageId", "sentMessageId") and isinstance(v, str):
+                            return v
+                        stack.append(v)
+                elif isinstance(cur, list):
+                    stack.extend(cur)
+        m = re.search(r"AAMk[A-Za-z0-9_\-/+]{20,}={0,2}", text)  # Graph message-id shape
+        return m.group(0) if m else None
+
+    async def send(self, address: dict, message: OutboundMessage) -> str | None:
         """address: {kind: teams_chat|teams_channel|email, chat_id|team_id/channel_id|to,
-        message_id?}. Teams attachments upload to OneDrive then link; email
-        attachments (gate CSVs, report) go inline via Graph mail_send."""
+        message_id?}. Returns the sent message id when available (email), so the caller can
+        thread the task. Teams attachments upload to OneDrive then link; email attachments
+        go inline via Graph mail_send."""
         kind = address.get("kind", "teams_chat")
 
         if kind == "email":
-            await self._send_mail(address, message)
-            return
+            return await self._send_mail(address, message)
 
         text = message.text
         links = await self._upload_attachments(message.attachments)
@@ -182,9 +205,12 @@ class TeamsMcpAdapter(ChannelAdapter):
             args["attachItems"] = attach_items
 
         tool = "mail_reply" if msg_id else "mail_send"
-        await self._call(tool, args, read_timeout=180.0)
+        out = await self._call(tool, args, read_timeout=180.0)
+        sent_id = self._msg_id(out)
         log.info("teams.sent", kind="email", mode="reply" if msg_id else "send",
-                 inline=len(inline), drive=len(attach_items))
+                 inline=len(inline), drive=len(attach_items), sent_id=bool(sent_id))
+        # for a reply keep threading on the original anchor; for a fresh send return the new id
+        return msg_id or sent_id
 
     async def _upload_to_drive(self, name: str, data: bytes) -> dict | None:
         """Upload bytes to the agent's OneDrive via a Graph upload session (no

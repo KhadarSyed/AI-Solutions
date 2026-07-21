@@ -31,3 +31,6 @@ Thumbs.db
 
 # Scratch
 tmp/
+
+.playwright-mcp/
+chat-*.png

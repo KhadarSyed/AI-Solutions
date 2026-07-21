@@ -38,8 +38,9 @@ class ChannelAdapter(ABC):
     def enabled(self) -> bool: ...
 
     @abstractmethod
-    async def send(self, address: dict, message: OutboundMessage) -> None:
-        """Deliver to a specific conversation/thread/recipient."""
+    async def send(self, address: dict, message: OutboundMessage) -> str | None:
+        """Deliver to a specific conversation/thread/recipient. Returns the sent
+        message id when the channel exposes one (email), so the caller can thread."""
 
     async def poll_inbound(self) -> AsyncIterator[ChannelInbound]:
         """Yield new inbound messages. Adapters that don't listen yield nothing."""

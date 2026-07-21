@@ -48,6 +48,83 @@ async def _task_cc(state: PipelineState) -> list[str]:
     return cc
 
 
+async def _thread_anchor(run_id: str | None) -> str | None:
+    """The message id every email for this task replies to, so the whole exchange stays
+    in ONE conversation. Set by the first (cold) send; read by every later send."""
+    if not run_id:
+        return None
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        import redis.asyncio as aioredis
+
+        from app.config.settings import get_settings
+
+        r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+        try:
+            return await r.get(f"thread:{run_id}:anchor")
+        finally:
+            await r.aclose()
+    return None
+
+
+async def _set_thread_anchor(run_id: str | None, msg_id: str) -> None:
+    """Persist the anchor (first writer wins) in Redis + on the Run row (survives restart)."""
+    if not (run_id and msg_id):
+        return
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        import redis.asyncio as aioredis
+
+        from app.config.settings import get_settings
+
+        r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+        try:
+            await r.set(f"thread:{run_id}:anchor", msg_id, nx=True, ex=14 * 24 * 3600)
+        finally:
+            await r.aclose()
+    with contextlib.suppress(Exception):
+        import uuid as _uuid
+
+        from app.db.base import get_sessionmaker
+        from app.db.models import Run
+
+        async with get_sessionmaker()() as db:
+            run = await db.get(Run, _uuid.UUID(str(run_id)))
+            if run and not (run.origin_address or {}).get("thread_msg_id"):
+                run.origin_address = {**(run.origin_address or {}), "thread_msg_id": msg_id}
+                await db.commit()
+
+
+async def _send_threaded(state: PipelineState, adapter: ChannelAdapter,
+                         message: OutboundMessage) -> None:
+    """Send on the task's single email thread. An anchor already exists for an
+    email-triggered run (the trigger's own message id) or once any prior send created
+    one; then we mail_reply to it. The first send with no anchor goes cold (mail_send)
+    and its returned id becomes the anchor for everything after. Non-email channels just
+    send. Kept resilient — a threading hiccup must never drop the message."""
+    addr = dict(state.get("origin_address") or {})
+    run_id = state.get("run_id")
+    if addr.get("kind", "email") != "email":
+        await adapter.send(addr, message)
+        return
+
+    anchor = addr.get("message_id")
+    if not anchor:
+        anchor = await _thread_anchor(run_id) or (state.get("origin_address") or {}).get(
+            "thread_msg_id")
+    if anchor:
+        addr["message_id"] = anchor
+        await adapter.send(addr, message)
+        return
+
+    addr.pop("message_id", None)          # cold start — create the thread
+    sent_id = await adapter.send(addr, message)
+    if sent_id:
+        await _set_thread_anchor(run_id, sent_id)
+
+
 def _task_subject(state: PipelineState) -> str:
     """ONE subject per task — every message (acks, gates, status, completion) shares
     it so the whole task collapses into a single email thread. The Task-ID tag also
@@ -82,9 +159,9 @@ async def notify_agent(state: PipelineState, agent: str, phase: str, message: st
     icon = _AGENT_ICON.get(agent, "•")
     cc = await _task_cc(state)
     with contextlib.suppress(Exception):
-        await adapter.send(state.get("origin_address", {}),
-                           OutboundMessage(subject=_task_subject(state), cc=cc,
-                                           text=f"{icon} {agent} Agent {phase} — {message}"))
+        await _send_threaded(state, adapter,
+                             OutboundMessage(subject=_task_subject(state), cc=cc,
+                                             text=f"{icon} {agent} Agent {phase} — {message}"))
 
 
 async def _deliver(state: PipelineState, event: str, message: str,
@@ -102,8 +179,8 @@ async def _deliver(state: PipelineState, event: str, message: str,
         log.info("notifier.no_adapter", channel=channel)  # web/scheduler: stream only
         return
     cc = await _task_cc(state)
-    await adapter.send(
-        state.get("origin_address", {}),
+    await _send_threaded(
+        state, adapter,
         OutboundMessage(subject=subject, text=message, html=html, attachments=attachments,
                         cc=cc),
     )
