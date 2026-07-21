@@ -83,7 +83,12 @@ async def resolve_batch_via_browser(urls: list[str], budget: int = 12,
     sem = asyncio.Semaphore(concurrency)
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch(args=["--no-sandbox"])
+            # --no-sandbox is required for Chromium in our unprivileged container
+            # (the container is the isolation boundary); --disable-dev-shm-usage
+            # avoids /dev/shm exhaustion. Pages loaded are news URLs the pipeline
+            # already fetches via httpx/Scrapling — same threat model.
+            browser = await p.chromium.launch(
+                args=["--no-sandbox", "--disable-dev-shm-usage"])
 
             async def one(u: str) -> None:
                 async with sem:
@@ -92,7 +97,9 @@ async def resolve_batch_via_browser(urls: list[str], budget: int = 12,
                         await page.goto(u, wait_until="domcontentloaded", timeout=20000)
                         await page.wait_for_timeout(2500)   # let the JS redirect settle
                         final = page.url
-                        if final.startswith("http") and _GNEWS_HOST not in final:
+                        parsed = urlparse(final)
+                        # only accept a real http(s) outlet (rejects javascript:/data:/file:)
+                        if parsed.scheme in ("http", "https") and _GNEWS_HOST not in parsed.netloc:
                             out[u] = (final, _domain(final))
                     except Exception:
                         pass

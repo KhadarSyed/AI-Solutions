@@ -118,6 +118,31 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.55;letter-spacing
 .summary-container .card{margin-bottom:16px}
 .summary-container li{margin:10px 0 10px 18px;font-size:14px;line-height:1.55;color:var(--ink)}
 .summary-container h3{color:var(--ink);font-family:var(--font-display)}
+/* home command-center */
+.home-intro{text-align:center;max-width:640px;margin:14px auto 26px}
+.eyebrow2{font-size:11px;font-weight:700;letter-spacing:.22em;text-transform:uppercase;color:var(--accent)}
+.home-intro h2{font-family:var(--font-display);font-size:34px;font-weight:600;letter-spacing:-.02em;margin:8px 0}
+.home-sub{color:var(--ink2);font-size:14px;line-height:1.6}
+.view-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}
+.view-card{text-align:left;cursor:pointer;background:var(--card);border:1px solid var(--line);
+  border-radius:20px;padding:24px;box-shadow:var(--shadow);display:flex;flex-direction:column;
+  gap:8px;transition:transform .25s ease,box-shadow .25s ease;font-family:var(--font-body)}
+.view-card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lift)}
+.vc-label{font-family:var(--font-display);font-size:20px;font-weight:600;color:var(--ink)}
+.vc-desc{font-size:13px;line-height:1.5;color:var(--ink2);flex:1}
+.vc-go{font-size:13px;font-weight:600;color:var(--accent);margin-top:6px}
+/* daily monitoring */
+.daily-day{background:var(--card);border:1px solid var(--line);border-radius:20px;
+  padding:18px 22px;margin-bottom:16px;box-shadow:var(--shadow)}
+.daily-date{font-family:var(--font-display);font-size:17px;font-weight:600;margin-bottom:10px;
+  display:flex;align-items:center;gap:10px}
+.daily-count{font-family:var(--font-body);font-size:11px;font-weight:700;color:var(--muted);
+  background:var(--card2);border-radius:20px;padding:2px 9px}
+.daily-row{display:flex;gap:12px;align-items:flex-start;padding:10px 0;border-top:1px solid var(--line)}
+.dr-title{font-size:13.5px;font-weight:500;line-height:1.45;color:var(--ink)}
+.dr-meta{font-size:11.5px;color:var(--muted);margin-top:2px}
+.sent{width:8px;height:8px;border-radius:50%;margin-top:6px;flex-shrink:0;background:var(--muted)}
+.sent-pos{background:var(--good)}.sent-neg{background:var(--bad)}.sent-neu{background:var(--muted)}
 footer{margin-top:44px;color:var(--muted);font-size:11.5px;text-align:center;letter-spacing:.02em}
 @media(max-width:640px){.chart-grid{grid-template-columns:1fr}.banner{height:250px}
   .banner h1{font-size:30px}.wrap{padding:24px 20px 70px}.banner .overlay{padding:0 22px 28px}}
@@ -205,6 +230,55 @@ def _logo_html(logo: dict, small: bool = False) -> str:
             f'style="background:{color}">{_e(logo.get("initials", "?"))}</span>')
 
 
+_TAB_DESC = {
+    "overview": "Coverage volume, reach and sentiment across every tracked source.",
+    "coverage": "Where the story landed — geography, outlets and the voices behind it.",
+    "competitive": "Share of voice and how the brand stacks up against its rivals.",
+    "reputation": "A composite reputation score, tracked over time and by driver.",
+    "narratives": "The active narratives shaping perception and how they move.",
+    "insights": "The board-ready read: executive summary and recommendations.",
+}
+
+
+def _home_cards(view_tabs: list[dict]) -> str:
+    cards = "".join(
+        f'<button class="view-card" onclick="showTab(\'{_e(t["id"])}\')">'
+        f'<span class="vc-label">{_e(t["label"])}</span>'
+        f'<span class="vc-desc">{_e(_TAB_DESC.get(t["id"], ""))}</span>'
+        f'<span class="vc-go">Open →</span></button>'
+        for t in view_tabs)
+    return ('<div class="home-intro"><span class="eyebrow2">Ways in</span>'
+            '<h2>Choose your view</h2>'
+            '<p class="home-sub">Track the story as it breaks, step back and measure the '
+            'period, or dive into narratives, PR impact and reputation — every signal '
+            'stays in sync across all views.</p></div>'
+            f'<div class="view-grid">{cards}</div>')
+
+
+def _daily_view(rows: list[dict]) -> str:
+    from collections import defaultdict
+
+    by_day: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_day[str(r.get("date", ""))[:10] or "Undated"].append(r)
+    if not by_day:
+        return '<div class="card"><h3>Daily Monitoring</h3><p>No dated coverage yet.</p></div>'
+    out = []
+    for day in sorted(by_day, reverse=True):
+        items = by_day[day]
+        rows_html = "".join(
+            f'<div class="daily-row">'
+            f'<span class="sent sent-{_e((r.get("sentiment") or "NEU").lower()[:3])}"></span>'
+            f'<div class="dr-main"><div class="dr-title">{_e(r.get("title", ""))}</div>'
+            f'<div class="dr-meta">{_e(r.get("publisher", "")) or "—"} · '
+            f'{_e(r.get("section", "")) or "—"}</div></div></div>'
+            for r in items)
+        out.append(f'<div class="daily-day"><div class="daily-date">{_e(day)}'
+                   f'<span class="daily-count">{len(items)} article'
+                   f'{"s" if len(items) != 1 else ""}</span></div>{rows_html}</div>')
+    return f'<div class="daily">{"".join(out)}</div>'
+
+
 def render(schema: dict) -> str:
     settings = get_settings()
     embed = settings.dashboard_asset_mode == "embed"
@@ -236,14 +310,21 @@ def render(schema: dict) -> str:
         parts += [_logo_html(c, small=True) for c in logos.get("competitors", [])]
         logo_strip = f'<div class="logos">{"".join(parts)}</div>'
 
-    # tab nav + pages (ids come from our fixed selector vocabulary; escape anyway)
+    # top-level views: Home landing + Daily Monitoring in front of the analytics tabs
+    nav_items = ([{"id": "home", "label": "Home"},
+                  {"id": "daily", "label": "Daily Monitoring"}] + tabs)
+    default_tab = "home"
     nav = "".join(
         f'<button class="tab{" on" if t["id"] == default_tab else ""}" data-t="{_e(t["id"])}">'
-        f'{_e(t["label"])}</button>' for t in tabs
+        f'{_e(t["label"])}</button>' for t in nav_items
     )
     pages = []
-    for t in tabs:
-        if t["id"] == "insights":
+    for t in nav_items:
+        if t["id"] == "home":
+            body = _home_cards(tabs)
+        elif t["id"] == "daily":
+            body = _daily_view(schema.get("daily", []))
+        elif t["id"] == "insights":
             s = schema.get("summaries", {})
             body = (
                 '<div class="summary-container">'

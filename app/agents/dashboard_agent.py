@@ -185,6 +185,27 @@ async def _chart_insights(charts: list[dict]) -> dict[str, str]:
         return {}
 
 
+async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:
+    """Approved articles as day-by-day rows for the Daily Monitoring view."""
+    if not session_id:
+        return []
+    with contextlib.suppress(Exception):
+        from app.artifacts import keys
+        from app.artifacts.factory import get_artifact_store
+
+        payload = await get_artifact_store().get_json(keys.tagged_file(session_id))
+        rows = [
+            {"date": str(a.get("published_date") or ""),
+             "title": a.get("title", ""),
+             "publisher": a.get("publisher_name") or a.get("publisher_domain", ""),
+             "sentiment": a.get("xai_sentiment", "NEU"),
+             "section": a.get("xai_section", "")}
+            for a in payload.get("articles", []) if a.get("is_approved")
+        ]
+        return rows[:limit]
+    return []
+
+
 async def build_schema(request: DashboardRequest) -> dict:
     boards = await _fetch_boards(request)
     if not request.requirements.include_geo:
@@ -267,6 +288,7 @@ async def build_schema(request: DashboardRequest) -> dict:
         "summaries": summaries,
         "logos": logos,
         "banner": banner,
+        "daily": await _daily_rows(request.session_id),
         "requirements": request.requirements.model_dump(),
     }
 
