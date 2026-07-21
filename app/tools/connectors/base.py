@@ -3,9 +3,9 @@ declares which filters it can apply source-side."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 class RawArticle(BaseModel):
@@ -16,6 +16,8 @@ class RawArticle(BaseModel):
     content: str = ""
     publisher_domain: str = ""
     published_date: date | None = None
+    published_time: str = ""      # HH:MM; blank when the source gives only a date (never faked)
+    published_at: datetime | None = None  # full timestamp when the source provides one
     url: str
     author: str = ""
     country: str = "all"          # resolved by the enrichment sub-agent when unknown
@@ -34,6 +36,17 @@ class RawArticle(BaseModel):
     @classmethod
     def _clean_url(cls, v: str) -> str:
         return v.strip()
+
+    @model_validator(mode="after")
+    def _derive_date_time(self) -> "RawArticle":
+        """When a full timestamp is known, split it into date + HH:MM. When only a date is
+        known, leave the time blank — we never fabricate a publication time."""
+        if self.published_at is not None:
+            if self.published_date is None:
+                self.published_date = self.published_at.date()
+            if not self.published_time:
+                self.published_time = self.published_at.strftime("%H:%M")
+        return self
 
 
 @dataclass(frozen=True)

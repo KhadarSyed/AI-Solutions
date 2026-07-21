@@ -168,7 +168,22 @@ async def gate2_approval(state: PipelineState) -> dict:
         with contextlib.suppress(Exception):
             n = await bulk_approve(project_id=state["project_id"], session_id=session_id)
             result["approved_count"] = n
-            await _progress(state, f"✅ Approved {n} articles — building dashboards.")
+            # Monitoring opt-out: an edited CSV attached to the approval can drop rows
+            # (Monitoring=FALSE) from the monitoring set — only TRUE rows hit the dashboard.
+            csv_key = decision.get("monitoring_csv_key")
+            if csv_key:
+                from app.artifacts.factory import get_artifact_store
+                from app.services.review_service import apply_monitoring_csv
+
+                data = await get_artifact_store().get_bytes(csv_key)
+                counts = await apply_monitoring_csv(
+                    project_id=state["project_id"], session_id=session_id, csv_bytes=data)
+                result["monitoring_dropped"] = counts["dropped"]
+                await _progress(
+                    state, f"🗂️ Monitoring set updated from your CSV — {counts['dropped']} "
+                    f"excluded, {counts['kept']} kept. Building dashboards.")
+            else:
+                await _progress(state, f"✅ Approved {n} articles — building dashboards.")
     return result
 
 

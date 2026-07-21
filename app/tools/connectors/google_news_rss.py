@@ -34,8 +34,10 @@ def _entry_to_article(entry, query: str, group: str) -> RawArticle:
     if decoded:
         link, domain = decoded
     published: date | None = None
+    published_at: datetime | None = None
     if getattr(entry, "published_parsed", None):
-        published = datetime(*entry.published_parsed[:6]).date()
+        published_at = datetime(*entry.published_parsed[:6])
+        published = published_at.date()
     title = getattr(entry, "title", "") or ""
     # google appends " - Publisher" to titles
     if publisher and title.endswith(f" - {publisher}"):
@@ -46,6 +48,7 @@ def _entry_to_article(entry, query: str, group: str) -> RawArticle:
         content=getattr(entry, "summary", "") or "",
         publisher_domain=domain,
         published_date=published,
+        published_at=published_at,
         url=link,
         language="en",
         source="google_news_rss",

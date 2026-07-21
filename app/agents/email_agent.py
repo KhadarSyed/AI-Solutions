@@ -272,9 +272,20 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
             return {"handled": False, "reason": "resume token missing/invalid"}
 
         decision = intent.gate_decision or "approved"
-        await get_run_manager().resume(
-            str(run.id), {"decision": decision, "feedback": inbound.text}
-        )
+        resume_payload: dict = {"decision": decision, "feedback": inbound.text}
+        # An edited tagged CSV attached to a Gate-2 approval is the monitoring opt-out:
+        # persist it so gate2_approval can drop the rows the user set to Monitoring=FALSE.
+        if decision == "approved":
+            for name, data, mime in (inbound.attachments or []):
+                if name.lower().endswith(".csv") or "csv" in (mime or "").lower():
+                    key = f"sessions/{run.session_id}/monitoring_override.csv"
+                    with contextlib.suppress(Exception):
+                        from app.artifacts.factory import get_artifact_store
+
+                        await get_artifact_store().put_bytes(key, data, "text/csv")
+                        resume_payload["monitoring_csv_key"] = key
+                    break
+        await get_run_manager().resume(str(run.id), resume_payload)
         with contextlib.suppress(Exception):
             await adapter.send(inbound.address, OutboundMessage(
                 subject=f"Re: {inbound.subject}",

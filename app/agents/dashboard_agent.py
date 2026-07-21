@@ -74,7 +74,7 @@ async def _fetch_boards(request: DashboardRequest) -> dict:
             tagged = await store.get_json(akeys.tagged_file(request.session_id))
             counts = Counter(
                 a.get("country", "all") for a in tagged.get("articles", [])
-                if a.get("is_approved") and a.get("country") not in ("", "all")
+                if a.get("is_approved_for_monitoring") and a.get("country") not in ("", "all")
             )
             if counts:
                 boards["_geo_counts"] = dict(counts)
@@ -207,11 +207,15 @@ async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:
         payload = await get_artifact_store().get_json(keys.tagged_file(session_id))
         rows = [
             {"date": str(a.get("published_date") or ""),
+             "time": str(a.get("published_time") or ""),
              "title": a.get("title", ""),
              "publisher": a.get("publisher_name") or a.get("publisher_domain", ""),
              "sentiment": a.get("xai_sentiment", "NEU"),
+             "theme": a.get("theme_primary") or a.get("xai_theme", ""),
+             "emotions": "; ".join(a.get("emotions", []) or []),
+             "signals": "; ".join(a.get("signals", []) or []),
              "section": a.get("xai_section", "")}
-            for a in payload.get("articles", []) if a.get("is_approved")
+            for a in payload.get("articles", []) if a.get("is_approved_for_monitoring")
         ]
         return rows[:limit]
     return []

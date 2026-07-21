@@ -25,6 +25,7 @@ class ChannelInbound:
     thread_ref: str = ""               # message-id / conversation id / mention id
     address: dict = field(default_factory=dict)   # reply-addressing for this thread
     raw_id: str = ""                   # dedupe key (Message-ID / mention id)
+    attachments: list[tuple[str, bytes, str]] = field(default_factory=list)  # name, data, mime
 
 
 class ChannelAdapter(ABC):

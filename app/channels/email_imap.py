@@ -69,12 +69,27 @@ class EmailAdapter(ChannelAdapter):
                     raw_id=parsed.get("Message-ID", num),
                     address={"to": email.utils.parseaddr(parsed.get("From", ""))[1],
                              "in_reply_to": parsed.get("Message-ID", "")},
+                    attachments=_attachments(parsed),
                 )
         except Exception as exc:
             log.info("email.poll_failed", error=str(exc)[:150])
         finally:
             with contextlib.suppress(Exception):
                 await client.logout()
+
+
+def _attachments(msg: EmailMessage) -> list[tuple[str, bytes, str]]:
+    """Extract file attachments (name, bytes, mime) — e.g. the edited monitoring CSV."""
+    if not msg.is_multipart():
+        return []
+    out: list[tuple[str, bytes, str]] = []
+    for part in msg.walk():
+        filename = part.get_filename()
+        if part.get_content_disposition() == "attachment" or filename:
+            data = part.get_payload(decode=True)
+            if data:
+                out.append((filename or "attachment", data, part.get_content_type()))
+    return out
 
 
 def _plain_body(msg: EmailMessage) -> str:

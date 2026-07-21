@@ -62,6 +62,8 @@ async def build_dashboards(*, session_id: str, force: bool = False) -> dict:
 
     tagged = await store.get_json(keys.tagged_file(session_id))
     approved = [a for a in tagged.get("articles", []) if a.get("is_approved")]
+    # Only Monitoring=TRUE rows reach the final dashboard. With no CSV opt-out this equals
+    # the approved set; the user's edited CSV can drop rows (Monitoring=FALSE) from it.
     monitoring_set = [a for a in tagged.get("articles", [])
                       if a.get("is_approved_for_monitoring")]
 
@@ -71,10 +73,10 @@ async def build_dashboards(*, session_id: str, force: bool = False) -> dict:
 
     dashboards = {
         "media_monitoring": monitoring.build(monitoring_set, sections),
-        "media_measurement": measurement.build(approved),
-        "pr_impact": impact.build(approved, brand, competitors),
-        "narrative_intelligence": narrative.build(approved),
-        "reputation_index": reputation.build(approved),
+        "media_measurement": measurement.build(monitoring_set),
+        "pr_impact": impact.build(monitoring_set, brand, competitors),
+        "narrative_intelligence": narrative.build(monitoring_set),
+        "reputation_index": reputation.build(monitoring_set),
     }
     for kind, data in dashboards.items():
         data["insights"] = await _synthesize(kind, data, brand)

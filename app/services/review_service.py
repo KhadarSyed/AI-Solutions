@@ -196,6 +196,46 @@ async def bulk_approve(*, project_id: str, session_id: str,
     return len(approved_ids)
 
 
+def _monitoring_off(value: str) -> bool:
+    return str(value).strip().lower() in {"false", "0", "no", "off", "n", ""}
+
+
+async def apply_monitoring_csv(*, project_id: str, session_id: str, csv_bytes: bytes) -> dict:
+    """Opt-out round-trip: the user's edited tagged CSV can only turn Monitoring OFF.
+    Any row whose `Monitoring` column reads false/0/no/off is dropped from the monitoring
+    set (is_approved_for_monitoring=False); every other row keeps its (approved) flag.
+    Only monitoring-TRUE rows reach the final dashboard. Returns {kept, dropped}."""
+    import csv as _csv
+    import io
+
+    reader = _csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig", errors="replace")))
+    drop_ids: set[str] = set()
+    if reader.fieldnames and "Monitoring" in reader.fieldnames:
+        for r in reader:
+            aid = (r.get("id") or "").strip()
+            if aid and _monitoring_off(r.get("Monitoring", "")):
+                drop_ids.add(aid)
+
+    counts = {"kept": 0, "dropped": 0}
+
+    def mutate(payload: dict) -> list[dict]:
+        for a in payload.get("articles", []):
+            if a.get("id") in drop_ids:
+                a["is_approved_for_monitoring"] = False
+                counts["dropped"] += 1
+            elif a.get("is_approved_for_monitoring"):
+                counts["kept"] += 1
+        return []  # a monitoring opt-out is not a per-article tagging correction
+
+    await _locked_mutation(session_id, mutate)
+    with contextlib.suppress(Exception):  # embedding flags are best-effort
+        for aid in drop_ids:
+            await vector_store.sync_flags(session_id, aid, is_approved_for_monitoring=False)
+    log.info("review.monitoring_csv", session_id=session_id, dropped=len(drop_ids),
+             kept=counts["kept"])
+    return counts
+
+
 async def delete_article(*, project_id: str, session_id: str, article_id: str) -> int:
     def mutate(payload: dict) -> list[dict]:
         article = _find(payload, article_id)
