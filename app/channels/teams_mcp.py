@@ -325,9 +325,15 @@ class TeamsMcpAdapter(ChannelAdapter):
             inbound = self._to_inbound(m)
             if inbound is not None:
                 yield inbound
-            with contextlib.suppress(Exception):
-                # tool parameter is `mention_id` (not `id`)
-                await self._call("mark_mention_processed", {"mention_id": m.get("id")})
+            # NB: do NOT mark processed here — the router calls ack_inbound() only after a
+            # definitive outcome, so a mention handled during a teams-mcp/DB blip retries.
+
+    async def ack_inbound(self, raw_id: str) -> None:
+        if not raw_id:
+            return
+        with contextlib.suppress(Exception):
+            # tool parameter is `mention_id` (not `id`)
+            await self._call("mark_mention_processed", {"mention_id": raw_id})
 
     @staticmethod
     def _to_inbound(m: dict) -> ChannelInbound | None:

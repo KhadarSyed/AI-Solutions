@@ -76,11 +76,39 @@ async def inbound_loop() -> None:
 
     inflight: set[asyncio.Task] = set()
 
-    async def _dispatch(inbound) -> None:
-        # each request is handled concurrently so many mentions/emails progress
-        # in parallel; runs themselves are governed by the RunManager semaphore
+    async def _dispatch(adapter, inbound) -> None:
+        """Handle one inbound message, consuming it ONLY once it's been dealt with.
+
+        A trigger is never lost silently: it's acknowledged (Redis dedup + the source's
+        mark-processed) only when handling reaches a definitive outcome — a run started, or
+        a firm rejection (not a stakeholder / not our subject). A transient failure (teams-mcp
+        502, DB blip) leaves it un-acked so the next poll retries it. An in-flight guard stops
+        the same still-pending mention from being dispatched twice while it's being handled."""
+        rid = inbound.raw_id
+        # already consumed in a prior poll — re-ack (in case the earlier ack didn't land) and stop
+        if rid and await r.get(f"inbound:{rid}"):
+            with contextlib.suppress(Exception):
+                await adapter.ack_inbound(rid)
+            return
+        if rid and not await r.set(f"inflight:{rid}", "1", nx=True, ex=300):
+            return  # a dispatch for this mention is already running
+        try:
+            res = await handle_inbound(inbound)
+        except Exception as exc:
+            log.warning("inbound.handle_error", raw_id=(rid or "")[:24], error=str(exc)[:200])
+            if rid:
+                await r.delete(f"inflight:{rid}")   # transient — allow retry next poll
+            return
+        handled = bool(res.get("handled"))
+        log.info("inbound.outcome", handled=handled, action=res.get("action"),
+                 reason=res.get("reason"), raw_id=(rid or "")[:24])
+        # definitive outcome (started OR firmly rejected) → consume + tell the source it's processed
+        if rid:
+            await r.set(f"inbound:{rid}", "1", ex=DEDUPE_TTL)
         with contextlib.suppress(Exception):
-            await handle_inbound(inbound)
+            await adapter.ack_inbound(rid)
+        if rid:
+            await r.delete(f"inflight:{rid}")
 
     ticks = 0
     while True:
@@ -88,12 +116,7 @@ async def inbound_loop() -> None:
             for adapter in adapters:
                 with contextlib.suppress(Exception):
                     async for inbound in adapter.poll_inbound():
-                        if inbound.raw_id:
-                            fresh = await r.set(f"inbound:{inbound.raw_id}", "1",
-                                                nx=True, ex=DEDUPE_TTL)
-                            if not fresh:
-                                continue
-                        task = asyncio.create_task(_dispatch(inbound))
+                        task = asyncio.create_task(_dispatch(adapter, inbound))
                         inflight.add(task)
                         task.add_done_callback(inflight.discard)
             ticks += 1

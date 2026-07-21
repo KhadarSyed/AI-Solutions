@@ -43,6 +43,13 @@ class ChannelAdapter(ABC):
         message id when the channel exposes one (email), so the caller can thread."""
 
     async def poll_inbound(self) -> AsyncIterator[ChannelInbound]:
-        """Yield new inbound messages. Adapters that don't listen yield nothing."""
+        """Yield new inbound messages. Adapters that don't listen yield nothing.
+        Do NOT consume/mark messages here — the router acks via ack_inbound() only once
+        handling reaches a definitive outcome, so a transient failure retries next poll."""
         return
         yield  # pragma: no cover — makes this an async generator
+
+    async def ack_inbound(self, raw_id: str) -> None:
+        """Mark an inbound message processed at the source so it stops resurfacing. Called
+        by the router only after handling succeeds or is firmly rejected. No-op by default."""
+        return
