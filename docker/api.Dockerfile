@@ -27,4 +27,5 @@ RUN playwright install --with-deps chromium
 COPY . .
 
 EXPOSE 8002
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8002"]
+# Migrate then serve on $PORT (Render/Fly set it). docker-compose overrides `command`.
+CMD ["sh", "docker/start.sh"]
