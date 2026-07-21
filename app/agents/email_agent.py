@@ -198,29 +198,19 @@ _REPORTS_RE = re.compile(
 
 
 async def _reports_reply(project_id: str, brand: str) -> str:
-    """List the archived reports (newest first) for the project, optionally by brand."""
-    from sqlalchemy import desc, select
-
-    from app.db.models import Run
+    """List the archived reports (newest first), optionally filtered by brand."""
+    from app.api.routes.reports import report_rows
 
     async with get_sessionmaker()() as db:
-        rows = (await db.execute(
-            select(Run).where(Run.graph_name == "pipeline", Run.status == "completed")
-            .order_by(desc(Run.created_at)).limit(60))).scalars().all()
-    lines: list[str] = []
-    for r in rows:
-        addr = r.origin_address or {}
-        if brand and brand.lower() not in (addr.get("brand", "") or "").lower():
-            continue
-        when = r.created_at.strftime("%d %b %Y %H:%M") if r.created_at else ""
-        url = addr.get("dashboard_url") or ""
-        lines.append(f"• [{addr.get('task_id', '?')}] {addr.get('brand', '')} — {when}"
-                     + (f"\n  {url}" if url else ""))
-        if len(lines) >= 15:
-            break
-    if not lines:
+        rows = await report_rows(db, brand or None, 15)
+    if not rows:
         return (f"I don't have any saved reports{f' for {brand}' if brand else ''} yet. "
                 "Trigger one with 'Monitor <Brand>'.")
+    lines = []
+    for r in rows:
+        when = (r["created_at"] or "")[:16].replace("T", " ")
+        lines.append(f"• [{r['task_id']}] {r['brand']} — {when}"
+                     + (f"\n  {r['dashboard_url']}" if r.get("dashboard_url") else ""))
     head = f"Your saved {brand} reports" if brand else "Your saved reports"
     return f"{head} (newest first):\n\n" + "\n".join(lines)
 
