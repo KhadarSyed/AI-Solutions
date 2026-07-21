@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     # Dashboard rendering
     dashboard_asset_mode: Literal["embed", "cdn"] = "embed"
     vercel_token: str = ""          # set → each finished report auto-publishes to Vercel
+    chat_api_base: str = "http://localhost:8002"   # where the in-report chat calls back
     pexels_api_key: str = ""
 
     # LLM — claude primary, Azure OpenAI is the fallback; per-stage overrides

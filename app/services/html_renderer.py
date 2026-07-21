@@ -143,6 +143,33 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.55;letter-spacing
 .dr-meta{font-size:11.5px;color:var(--muted);margin-top:2px}
 .sent{width:8px;height:8px;border-radius:50%;margin-top:6px;flex-shrink:0;background:var(--muted)}
 .sent-pos{background:var(--good)}.sent-neg{background:var(--bad)}.sent-neu{background:var(--muted)}
+/* in-report chat */
+.chat-fab{position:fixed;right:24px;bottom:24px;z-index:1000;border:0;cursor:pointer;
+  background:var(--accent);color:#fff;border-radius:24px;padding:13px 20px;font-weight:600;
+  font-family:var(--font-body);font-size:14px;box-shadow:0 8px 24px rgba(0,0,0,.28);
+  display:flex;align-items:center;gap:8px;transition:transform .2s ease}
+.chat-fab:hover{transform:translateY(-2px)}
+.chat-panel{position:fixed;right:24px;bottom:84px;z-index:1000;width:min(400px,92vw);
+  height:min(560px,72vh);background:var(--card);border:1px solid var(--line);border-radius:20px;
+  box-shadow:0 24px 60px rgba(0,0,0,.4);display:none;flex-direction:column;overflow:hidden}
+.chat-panel.open{display:flex}
+.chat-head{padding:15px 18px;border-bottom:1px solid var(--line);font-family:var(--font-display);
+  font-size:16px;font-weight:600;display:flex;justify-content:space-between;align-items:center}
+.chat-close{border:0;background:transparent;color:var(--ink2);font-size:22px;cursor:pointer;line-height:1}
+.chat-log{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px}
+.chat-msg{max-width:88%;padding:10px 13px;border-radius:14px;font-size:13.5px;line-height:1.5;
+  white-space:pre-wrap;word-wrap:break-word}
+.chat-msg.user{align-self:flex-end;background:var(--accent);color:#fff}
+.chat-msg.bot{align-self:flex-start;background:var(--card2);color:var(--ink)}
+.chat-msg .ts{display:block;font-size:10px;opacity:.55;margin-top:5px}
+.chat-msg table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}
+.chat-msg th,.chat-msg td{border:1px solid var(--line);padding:4px 7px;text-align:left}
+.chat-input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
+.chat-input input{flex:1;border:1px solid var(--line);border-radius:12px;padding:10px 12px;
+  background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:13.5px}
+.chat-input button{border:0;background:var(--accent);color:#fff;border-radius:12px;padding:0 16px;
+  font-weight:600;cursor:pointer}
+.chat-note{font-size:11px;color:var(--muted);text-align:center;padding:0 12px 11px}
 footer{margin-top:44px;color:var(--muted);font-size:11.5px;text-align:center;letter-spacing:.02em}
 @media(max-width:640px){.chart-grid{grid-template-columns:1fr}.banner{height:250px}
   .banner h1{font-size:30px}.wrap{padding:24px 20px 70px}.banner .overlay{padding:0 22px 28px}}
@@ -384,6 +411,36 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
             + f"<script>{GEO_JS}</script>"
         )
 
+    chat = schema.get("chat") or {}
+    chat_widget = ""
+    if chat.get("session_id") and chat.get("token"):
+        chat_json = json.dumps(chat).replace("<", "\\u003c")
+        chat_widget = f"""
+<button class="chat-fab" onclick="chatToggle()">💬 Ask the data agent</button>
+<div class="chat-panel" id="chatPanel">
+  <div class="chat-head">Ask the data agent<button class="chat-close" onclick="chatToggle()" aria-label="close">×</button></div>
+  <div class="chat-log" id="chatLog"><div class="chat-msg bot">Ask anything about this coverage — I answer from the analyzed articles.</div></div>
+  <div class="chat-input"><input id="chatIn" placeholder="e.g. top negative story this week?" autocomplete="off"><button onclick="chatSend()">Send</button></div>
+  <div class="chat-note">Grounded in this report · available for {chat.get('window_days', 3)} days</div>
+</div>
+<script>
+const CHAT={chat_json};
+function chatToggle(){{document.getElementById('chatPanel').classList.toggle('open');}}
+function chatEsc(s){{return (s||'').replace(/[&<>]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]));}}
+function chatSend(){{
+  const inp=document.getElementById('chatIn'),log=document.getElementById('chatLog');
+  const q=(inp.value||'').trim(); if(!q)return; inp.value='';
+  log.insertAdjacentHTML('beforeend','<div class="chat-msg user">'+chatEsc(q)+'</div>');
+  const t=document.createElement('div'); t.className='chat-msg bot'; t.textContent='…'; log.appendChild(t); log.scrollTop=log.scrollHeight;
+  fetch(CHAT.api_base+'/chat/'+CHAT.session_id,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:q,token:CHAT.token}})}})
+   .then(r=>r.json().then(d=>({{ok:r.ok,d}})))
+   .then(o=>{{ if(!o.ok){{t.textContent=(o.d&&o.d.detail)||'That request failed.';}} else {{ t.innerHTML=chatEsc(o.d.answer).replace(/\\n/g,'<br>')+'<span class="ts">'+new Date(o.d.timestamp).toLocaleString()+'</span>'; }} log.scrollTop=log.scrollHeight; }})
+   .catch(()=>{{t.textContent='Network error — is the agent reachable?';}});
+}}
+document.getElementById('chatIn').addEventListener('keydown',e=>{{if(e.key==='Enter')chatSend();}});
+</script>
+"""
+
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -411,6 +468,7 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
   <footer>Self-contained dashboard · charts by Apache ECharts{" + D3" if has_geo else ""} ·
     video: Pexels</footer>
 </div>
+{chat_widget}
 {_script("echarts.min.js", embed)}
 {geo_scripts}
 <script>{TAB_JS}</script>

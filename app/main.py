@@ -6,6 +6,7 @@ from fastapi import FastAPI
 
 from app.api.routes.admin import router as admin_router
 from app.api.routes.charts import router as charts_router
+from app.api.routes.chat import router as chat_router
 from app.api.routes.dashboards import router as dashboards_router
 from app.api.routes.monitor import router as monitor_router
 from app.api.routes.projects import router as projects_router
@@ -82,6 +83,15 @@ def create_app() -> FastAPI:
     setup_logging()
     app = FastAPI(title="PR Intelligence Agent", version="0.1.0", lifespan=lifespan)
     setup_tracing(app)
+    # the in-report chat is called cross-origin from the Vercel-hosted dashboard;
+    # it is token-scoped per report, so a permissive CORS policy on it is acceptable
+    from fastapi.middleware.cors import CORSMiddleware
+
+    app.add_middleware(
+        CORSMiddleware, allow_origins=["*"], allow_methods=["POST", "OPTIONS"],
+        allow_headers=["*"],
+    )
+    app.include_router(chat_router)
     app.include_router(admin_router)
     app.include_router(monitor_router)
     app.include_router(projects_router)

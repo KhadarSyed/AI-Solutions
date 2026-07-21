@@ -185,6 +185,17 @@ async def _chart_insights(charts: list[dict]) -> dict[str, str]:
         return {}
 
 
+def _chat_config(session_id: str) -> dict:
+    """Config the dashboard embeds so its in-report chat can call the API."""
+    if not session_id:
+        return {}
+    from app.config.settings import get_settings
+    from app.security.auth import chat_token
+
+    return {"session_id": session_id, "token": chat_token(session_id),
+            "api_base": get_settings().chat_api_base.rstrip("/"), "window_days": 3}
+
+
 async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:
     """Approved articles as day-by-day rows for the Daily Monitoring view."""
     if not session_id:
@@ -289,6 +300,7 @@ async def build_schema(request: DashboardRequest) -> dict:
         "logos": logos,
         "banner": banner,
         "daily": await _daily_rows(request.session_id),
+        "chat": _chat_config(request.session_id),
         "requirements": request.requirements.model_dump(),
     }
 

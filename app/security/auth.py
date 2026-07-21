@@ -31,6 +31,17 @@ def token_in_text(run_id: str, text: str) -> bool:
     return False
 
 
+def chat_token(session_id: str) -> str:
+    """Per-report capability token embedded in the dashboard — lets the in-report
+    chat query that report's corpus without exposing the admin key."""
+    key = get_settings().admin_api_key.encode()
+    return hmac.new(key, f"chat:{session_id}".encode(), hashlib.sha256).hexdigest()[:24]
+
+
+def verify_chat_token(session_id: str, token: str) -> bool:
+    return hmac.compare_digest(token or "", chat_token(session_id))
+
+
 # ── browser session tokens (random id in Redis; raw key never in the cookie) ──
 
 SESSION_TTL = 30 * 24 * 3600
