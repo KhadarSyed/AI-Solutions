@@ -22,7 +22,42 @@ log = get_logger(__name__)
 TAB_LABELS = {
     "overview": "Overview", "coverage": "Coverage", "competitive": "Competitive",
     "reputation": "Reputation", "narratives": "Narratives", "insights": "AI Insights",
+    # Media Measurement sub-tabs (the agreed 5)
+    "mm_overview": "Overview", "mm_sentiment": "Sentiment Analysis",
+    "mm_themes": "Themes & Topics", "mm_coverage": "Media Coverage",
+    "mm_stories": "Key Stories",
 }
+
+# every analytics chart regrouped under the 5 Media Measurement tabs
+_MM_REMAP = {
+    "coverage_trend": "mm_overview", "coverage_map": "mm_coverage",
+    "competitive": "mm_overview", "competitive_matrix": "mm_overview",
+    "impact_ranking": "mm_stories", "reputation_radar": "mm_overview",
+    "section_heatmap": "mm_coverage", "top_themes": "mm_themes",
+    "narrative_threads": "mm_themes", "top_publications": "mm_coverage",
+}
+_MM_TAB_ORDER = ("mm_overview", "mm_sentiment", "mm_themes", "mm_coverage", "mm_stories")
+
+
+def _sentiment_donut(monitored: list[dict]) -> dict | None:
+    from collections import Counter
+    if not monitored:
+        return None
+    c = Counter(a.get("xai_sentiment", "NEU") for a in monitored)
+    return {
+        "id": "sentiment_donut", "engine": "echarts", "tab": "mm_sentiment",
+        "title": "Sentiment Distribution",
+        "option": {
+            "tooltip": {"trigger": "item"}, "legend": {"bottom": 0},
+            "series": [{"type": "pie", "radius": ["45%", "70%"], "data": [
+                {"value": c.get("POS", 0), "name": "Positive",
+                 "itemStyle": {"color": "#2f8f5b"}},
+                {"value": c.get("NEU", 0), "name": "Neutral",
+                 "itemStyle": {"color": "#9aa2ad"}},
+                {"value": c.get("NEG", 0), "name": "Negative",
+                 "itemStyle": {"color": "#dc2626"}}]}],
+        },
+    }
 
 
 class DashboardRequirements(BaseModel):
@@ -253,13 +288,21 @@ async def build_schema(request: DashboardRequest) -> dict:
         for c in charts:
             c["insight"] = insights.get(c["id"], "")
 
-    tab_ids = [t for t in ("overview", "coverage", "competitive", "reputation", "narratives")
-               if any(c["tab"] == t for c in charts)]
-    if request.requirements.include_ai_summary:
-        tab_ids.append("insights")
-    if template and template.get("tab_order"):
-        order = {tid: i for i, tid in enumerate(template["tab_order"])}
-        tab_ids.sort(key=lambda t: order.get(t, 99))
+    # Regroup analytics under the 5 Media Measurement tabs (the agreed design), and add a
+    # sentiment donut so the Sentiment Analysis tab is populated.
+    for c in charts:
+        c["tab"] = _MM_REMAP.get(c["id"], "mm_overview")
+    with contextlib.suppress(Exception):
+        from app.artifacts import keys as _keys
+        from app.artifacts.factory import get_artifact_store as _store
+
+        if request.session_id:
+            tagged = await _store().get_json(_keys.tagged_file(request.session_id))
+            mon = [a for a in tagged.get("articles", []) if a.get("is_approved_for_monitoring")]
+            donut = _sentiment_donut(mon)
+            if donut:
+                charts.insert(0, donut)
+    tab_ids = [t for t in _MM_TAB_ORDER if any(c["tab"] == t for c in charts)]
 
     summaries = await _summaries(request, {k: v for k, v in boards.items()
                                            if not k.startswith("_")}, kpis)

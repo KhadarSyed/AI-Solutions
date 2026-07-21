@@ -107,6 +107,13 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.55;letter-spacing
 .kpi-card .sub{font-size:11.5px;color:var(--ink2);margin-top:3px}
 .page{display:none}.page.on{display:block;animation:fade .4s ease both}
 @keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.subtabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 20px;background:var(--card);
+  border:1px solid var(--line);border-radius:14px;padding:6px}
+.subtab{border:0;background:transparent;color:var(--ink2);font:inherit;font-size:13.5px;
+  font-weight:600;padding:8px 14px;border-radius:9px;cursor:pointer;transition:all .15s}
+.subtab:hover{color:var(--ink)}
+.subtab.on{background:var(--accent);color:#fff}
+.subpage{display:none}.subpage.on{display:block;animation:fade .35s ease both}
 .chart-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(440px,1fr));gap:20px}
 .chart-insight{margin:0 0 14px;font-size:12.5px;line-height:1.5;color:var(--ink2)}
 .card{background:var(--card);border-radius:20px;padding:24px;box-shadow:var(--shadow);
@@ -269,6 +276,8 @@ _TAB_DESC = {
     "reputation": "A composite reputation score, tracked over time and by driver.",
     "narratives": "The active narratives shaping perception and how they move.",
     "insights": "The board-ready read: executive summary and recommendations.",
+    "daily": "Track coverage day by day — filter by date, browse and re-file by section.",
+    "media": "Measure the period: overview, sentiment, themes, media coverage and key stories.",
 }
 
 
@@ -573,40 +582,64 @@ def render(schema: dict) -> str:
         parts += [_logo_html(c, small=True) for c in logos.get("competitors", [])]
         logo_strip = f'<div class="logos">{"".join(parts)}</div>'
 
-    # top-level views: Home landing + Daily Monitoring in front of the analytics tabs
-    nav_items = ([{"id": "home", "label": "Home"},
-                  {"id": "daily", "label": "Daily Monitoring"}] + tabs)
+    # top-level navigation (the agreed design): Home · Daily Monitoring · Media Measurement.
+    # All analytics live as sub-tabs INSIDE Media Measurement.
+    mm_tabs = tabs
+    nav_items = [{"id": "home", "label": "Home"},
+                 {"id": "daily", "label": "Daily Monitoring"},
+                 {"id": "media", "label": "Media Measurement"}]
     default_tab = "home"
     nav = "".join(
         f'<button class="tab{" on" if t["id"] == default_tab else ""}" data-t="{_e(t["id"])}">'
         f'{_e(t["label"])}</button>' for t in nav_items
     )
+
+    def _grid_for(tab_id: str, prepend: str = "") -> str:
+        cards = prepend + "".join(
+            f'<div class="card"><h3>{_e(c["title"])}</h3>'
+            + (f'<p class="chart-insight">{_e(c["insight"])}</p>' if c.get("insight") else "")
+            + f'<div class="chart" id="chart-{_e(c["id"])}"></div></div>'
+            for c in charts if c["tab"] == tab_id)
+        return f'<div class="chart-grid">{cards or "<p>No charts for this view yet.</p>"}</div>'
+
+    # executive summary + recommendations fold into the Overview sub-tab (no separate tab)
+    s = schema.get("summaries", {})
+    summary_card = ""
+    if s.get("executive") or s.get("recommendations"):
+        summary_card = (
+            '<div class="card"><h3>Executive Summary</h3><ul>'
+            + "".join(f"<li>{_e(b)}</li>" for b in s.get("executive", []) or ["—"])
+            + '</ul><h3 style="margin-top:14px">Recommendations</h3><ul>'
+            + "".join(f"<li>{_e(b)}</li>" for b in s.get("recommendations", []) or ["—"])
+            + "</ul></div>")
+
+    sub_default = mm_tabs[0]["id"] if mm_tabs else ""
+    subnav = "".join(
+        f'<button class="subtab{" on" if t["id"] == sub_default else ""}" '
+        f'data-sub="{_e(t["id"])}">{_e(t["label"])}</button>' for t in mm_tabs)
+    subpages = "".join(
+        f'<section class="subpage{" on" if t["id"] == sub_default else ""}" '
+        f'id="sub-{_e(t["id"])}">'
+        f'{_grid_for(t["id"], summary_card if t["id"] == "mm_overview" else "")}</section>'
+        for t in mm_tabs)
+    media_body = (
+        f'<nav class="subtabs">{subnav}</nav>{subpages}'
+        '<script>document.querySelectorAll(".subtab").forEach(function(b){'
+        'b.addEventListener("click",function(){var s=b.getAttribute("data-sub");'
+        'document.querySelectorAll(".subtab").forEach(function(x){x.classList.toggle("on",x===b);});'
+        'document.querySelectorAll(".subpage").forEach(function(p){'
+        'p.classList.toggle("on",p.id==="sub-"+s);});'
+        'window.dispatchEvent(new Event("resize"));});});</script>')
+
     pages = []
     for t in nav_items:
         if t["id"] == "home":
-            body = _home_cards(tabs)
+            body = _home_cards([{"id": "daily", "label": "Daily Monitoring"},
+                                {"id": "media", "label": "Media Measurement"}])
         elif t["id"] == "daily":
             body = _daily_view(schema.get("daily", []), schema.get("chat", {}))
-        elif t["id"] == "insights":
-            s = schema.get("summaries", {})
-            body = (
-                '<div class="summary-container">'
-                '<div class="card"><h3>Executive Summary</h3><ul>'
-                + "".join(f"<li>{_e(b)}</li>" for b in s.get("executive", [])
-                          or ["No summary generated."])
-                + '</ul></div><div class="card"><h3>Recommendations</h3><ul>'
-                + "".join(f"<li>{_e(b)}</li>" for b in s.get("recommendations", []) or ["—"])
-                + "</ul></div></div>"
-            )
         else:
-            cards = "".join(
-                f'<div class="card"><h3>{_e(c["title"])}</h3>'
-                + (f'<p class="chart-insight">{_e(c["insight"])}</p>'
-                   if c.get("insight") else "")
-                + f'<div class="chart" id="chart-{_e(c["id"])}"></div></div>'
-                for c in charts if c["tab"] == t["id"]
-            )
-            body = f'<div class="chart-grid">{cards}</div>'
+            body = media_body
         on = " on" if t["id"] == default_tab else ""
         pages.append(f'<section class="page{on}" id="page-{_e(t["id"])}">{body}</section>')
 
