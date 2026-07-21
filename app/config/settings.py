@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     inbound_poll_seconds: int = 5          # email + teams chat/channel poll cadence
     collection_days_back: int = 2          # default news window (48h) per collection run
 
+    # Pending-gate escalation: when a run is awaiting a human approval, re-notify at this
+    # cadence up to gate_max_reminders times; if still no reply, drop (cancel) the run and
+    # move on to other pending work. Keeps a stalled task from blocking a run slot forever.
+    gate_escalation_enabled: bool = True
+    gate_reminder_minutes: int = 30        # minutes between approval reminders
+    gate_max_reminders: int = 2            # reminders after the first gate email, then drop
+
     # Self-healing
     self_heal_enabled: bool = True
     self_heal_browser: bool = False  # browser-assisted fix path (Phase C runtime)
@@ -115,11 +122,10 @@ class Settings(BaseSettings):
     email_delivery: str = "graph"
     # Trigger phrases the mention subscription watches for (comma-separated),
     # in addition to @Agent mentions.
-    mention_keywords: str = ("@Agent,BeOne,Trane,Otsuka,"
-                             # canonical trigger subjects
-                             "monitor beone,monitor trane,monitor otsuka,"
-                             "start monitoring,start beone,start trane,"
-                             "start otsuka,PR monitoring,"
+    mention_keywords: str = ("@Agent,"
+                             # generic trigger subjects — ANY brand, not a fixed list
+                             "monitor,track,start monitoring,begin monitoring,"
+                             "launch monitoring,PR monitoring,"
                              # gate replies + follow-up intents must surface too
                              "approve,approved,proceed,looks good,go ahead,"
                              "changes,revise,reject,RT")

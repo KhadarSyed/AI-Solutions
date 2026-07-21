@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
     try:
         from app.channels.registry import inbound_loop, register_channel_adapters
         from app.orchestration.checkpoint import setup_checkpointer_tables
+        from app.orchestration.gate_escalation import gate_escalation_loop
         from app.orchestration.run_manager import get_run_manager
         from app.scheduler.loop import scheduler_loop
 
@@ -70,6 +71,7 @@ async def lifespan(app: FastAPI):
         register_channel_adapters()
         background.append(asyncio.create_task(scheduler_loop()))
         background.append(asyncio.create_task(inbound_loop()))
+        background.append(asyncio.create_task(gate_escalation_loop()))
     except Exception as exc:
         # infra warm-up problems surface via /health, not a crashed process
         log.error("app.startup_degraded", error=str(exc))

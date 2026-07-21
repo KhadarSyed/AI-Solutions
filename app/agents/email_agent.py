@@ -112,13 +112,14 @@ async def _match_project(inbound: ChannelInbound) -> tuple[Project | None, bool]
     # pick the most fully-configured one deterministically — an industry-tagged project
     # first (so competitor research resolves the right entity), then the one with the most
     # stakeholders, then the newest — rather than whatever the DB happens to return first.
-    brand = _detect_brand(f"{inbound.subject}\n{inbound.text}")
+    brand = _extract_brand_generic(inbound.subject, inbound.text)
     matches = [p for p in projects
                if candidates & {e.lower() for e in (p.stakeholder_emails or [])}]
     if brand:
-        branded = [p for p in matches if p.brand_name.lower() == brand.lower()]
-        if branded:
-            matches = branded
+        # a brand is named — ONLY a project for that same brand counts. If the stakeholder
+        # has none yet (e.g. Otsuka), return None so the caller auto-provisions the right
+        # project rather than mis-routing the task onto a different brand's project.
+        matches = [p for p in matches if p.brand_name.lower() == brand.lower()]
     if matches:
         matches.sort(key=lambda p: (bool(p.industry), len(p.stakeholder_emails or []),
                                     p.created_at or 0), reverse=True)
