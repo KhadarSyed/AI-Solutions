@@ -71,6 +71,11 @@ class Project(Base, TimestampMixin):
     competitors: Mapped[dict] = mapped_column(
         JSONB, nullable=False, server_default=text("'[]'::jsonb")
     )
+    # extra tagging data points requested by the user at a gate — persisted so future
+    # runs' tagging inherits them (the "update the Tagging agent's memory" ask).
+    tagging_notes: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     owner_user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"))
 
 

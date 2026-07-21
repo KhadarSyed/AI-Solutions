@@ -23,13 +23,19 @@ log = get_logger(__name__)
 
 
 def _batch_prompt(
-    articles: list[dict], brand: str, competitors: list[str], sections: list[str], bias: str
+    articles: list[dict], brand: str, competitors: list[str], sections: list[str], bias: str,
+    additions: list[str] | None = None,
 ) -> str:
     lines = [
         f"Brand of interest: {brand}",
         f"Known competitors: {', '.join(competitors) or 'none provided'}",
         f"Allowed sections: {', '.join(sections)}",
     ]
+    if additions:
+        lines.append(
+            "User-requested extra data points to capture (note them in the relevant reason "
+            "fields and, where they map to a signal/theme, reflect them): "
+            + "; ".join(additions))
     if bias:
         lines.append("")
         lines.append(bias)
@@ -64,6 +70,16 @@ async def tag_session(*, session_id: str, project_id: str) -> dict:
     brand = config.get("brand", "")
     competitors = config.get("competitors", [])
     sections = config.get("sections") or ["Brand News", "Competitors News", "Industry News"]
+    # user-requested extra data points: this run (session config) + inherited (project)
+    additions = list(config.get("tagging_additions", []))
+    try:
+        from app.db.models import Project
+
+        async with get_sessionmaker()() as db:
+            proj = await db.get(Project, uuid.UUID(project_id))
+        additions = list(dict.fromkeys([*additions, *((proj.tagging_notes or []) if proj else [])]))
+    except Exception:
+        pass
 
     # reach enrichment (deterministic)
     reach = await enrich_reach([a.get("publisher_domain", "") for a in articles])
@@ -88,7 +104,8 @@ async def tag_session(*, session_id: str, project_id: str) -> dict:
     async def tag_batch(offset: int, batch: list[dict]) -> None:
         async with sem:
             try:
-                out = await tagger.run(_batch_prompt(batch, brand, competitors, sections, bias))
+                out = await tagger.run(
+                    _batch_prompt(batch, brand, competitors, sections, bias, additions))
             except Exception as exc:
                 failures.append(f"batch@{offset}: {exc}")
                 return

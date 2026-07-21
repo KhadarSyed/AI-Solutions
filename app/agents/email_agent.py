@@ -22,8 +22,15 @@ from app.observability.logging import get_logger
 
 log = get_logger(__name__)
 
-_APPROVE_RE = re.compile(r"\b(approve|approved|looks good|go ahead|proceed|yes)\b", re.I)
-_CHANGES_RE = re.compile(r"\b(change|changes|revise|instead|add|remove|different|redo)\b", re.I)
+_APPROVE_RE = re.compile(
+    r"\b(approve|approved|looks good|go ahead|proceed|yes|sign\s*off|signed\s*off|"
+    r"ok|okay|confirm|confirmed|good to go)\b", re.I)
+# scope changes that should loop the gate (plan/collection), not proceed
+_CHANGES_RE = re.compile(
+    r"\b(change|changes|revise|instead|different|redo|remove|drop|exclude)\b"
+    r"|\badd (?:competitor|brand|rival)|\b(?:last|past)\s+\d+\s+day", re.I)
+# enriching the tagging (a data point) — proceed, and capture it
+_ADD_DP_RE = re.compile(r"\b(add|include|also\s+(?:tag|track)|capture)\b", re.I)
 
 
 class InboundIntent(BaseModel):
@@ -132,10 +139,11 @@ async def _classify(inbound: ChannelInbound, has_pending_gate: bool) -> InboundI
     text = f"{inbound.subject}\n{inbound.text}"
     # cheap deterministic path for clear gate replies
     if has_pending_gate:
-        if _APPROVE_RE.search(inbound.text) and not _CHANGES_RE.search(inbound.text):
-            return InboundIntent(kind="gate_decision", gate_decision="approved")
-        if _CHANGES_RE.search(inbound.text):
+        body = inbound.text
+        if _CHANGES_RE.search(body):           # scope change → loop the gate
             return InboundIntent(kind="gate_decision", gate_decision="changes")
+        if _APPROVE_RE.search(body) or _ADD_DP_RE.search(body):  # proceed (+ maybe add a DP)
+            return InboundIntent(kind="gate_decision", gate_decision="approved")
     # deterministic start-run detection (no pending gate)
     if not has_pending_gate and _START_RE.search(text):
         brand = _detect_brand(text)
@@ -144,11 +152,13 @@ async def _classify(inbound: ChannelInbound, has_pending_gate: bool) -> InboundI
     agent = GuardedAgent(
         purpose="inbound_intent", stage="email_agent",
         system_prompt=(
-            "Classify a stakeholder message. kind is one of: gate_decision (they are "
-            "approving or requesting changes to a pending review), question (asking about "
-            "coverage), change_request (asking to change the analysis: new competitor, date "
-            "range, sections), report_request (wants the report). If gate_decision, set "
-            "gate_decision to approved or changes."
+            "Classify a stakeholder message. kind is one of: gate_decision (approving or "
+            "changing a pending review), question (asking about coverage), change_request "
+            "(change the analysis), report_request (wants the report). For gate_decision set "
+            "gate_decision to 'approved' or 'changes'. Approving includes 'yes', 'go ahead', "
+            "'sign off', or approving while asking to ADD a data point to tag (still "
+            "approved). Use 'changes' only for scope changes: a different competitor, date "
+            "range, or redo."
         ),
         output_type=InboundIntent, temperature=0.0, user_originated_input=True,
     )

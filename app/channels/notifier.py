@@ -77,6 +77,32 @@ async def _deliver(state: PipelineState, event: str, message: str,
     )
 
 
+async def notify_stage(state: PipelineState, *, stage_key: str, message: str,
+                       html: str = "",
+                       attachments: list[tuple[str, bytes, str]] | None = None) -> None:
+    """A staged update with no gate CSV (e.g. the plan gate). Deduped per run+stage+content
+    so LangGraph's node re-execution on resume doesn't double-send."""
+    import hashlib
+
+    run_id = state.get("run_id")
+    if run_id:
+        import redis.asyncio as aioredis
+
+        from app.config.settings import get_settings
+
+        sig = hashlib.sha256((html or message).encode()).hexdigest()[:16]
+        r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+        try:
+            fresh = await r.set(f"notify:{run_id}:{stage_key}:{sig}", "1", nx=True, ex=48 * 3600)
+        finally:
+            await r.aclose()
+        if not fresh:
+            log.info("notifier.stage_deduped", stage=stage_key, run_id=run_id)
+            return
+    await _deliver(state, "notification_sent", message, attachments or [],
+                   subject=_task_subject(state), html=html)
+
+
 async def notify_gate(state: PipelineState, *, gate: int, csv_key: str, message: str,
                       csv_sha: str = "", html: str = "",
                       extra_attachments: list[tuple[str, bytes, str]] | None = None) -> None:
@@ -132,6 +158,21 @@ async def notify_progress(state: PipelineState, message: str) -> None:
                                    OutboundMessage(subject="Progress", text=message))
 
 
+async def _cfg_competitors(session_id: str) -> list[str]:
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        import uuid as _uuid
+
+        from app.db.base import get_sessionmaker
+        from app.db.models import Session as SessionRow
+
+        async with get_sessionmaker()() as db:
+            row = await db.get(SessionRow, _uuid.UUID(session_id))
+        return (row.config or {}).get("competitors", []) if row else []
+    return []
+
+
 async def notify_complete(state: PipelineState) -> None:
     """Final stage — deliver the dashboard + tagged CSV + branded report to the
     origin channel (same email thread), then invite follow-up questions."""
@@ -154,18 +195,27 @@ async def notify_complete(state: PipelineState) -> None:
         "Reply to this thread with any questions and I'll answer them from the "
         "analyzed coverage."
     )
-    # Final staged update (deterministic counts) — styled body for email origins.
+    # Final staged update — home-page snapshot body (deterministic counts + headline charts).
     html_body = ""
     with contextlib.suppress(Exception):
         from app.analytics import stage_stats
+        from app.artifacts import keys as _keys
+        from app.artifacts.factory import get_artifact_store
         from app.channels import stage_report
 
-        fstats = stage_stats.final_stats(
-            approved_count=state.get("approved_count", 0),
-            monitoring_count=state.get("monitoring_count", state.get("approved_count", 0)))
+        monitoring = state.get("monitoring_count", state.get("approved_count", 0))
+        approved = state.get("approved_count", 0)
         tid = state.get("task_id") or (state.get("origin_address") or {}).get("task_id") or ""
-        html_body = stage_report.final_html(tid, brand, 3, fstats,
-                                            state.get("dashboard_url", ""))
+        tagged_articles = (await get_artifact_store().get_json(
+            _keys.tagged_file(session_id))).get("articles", [])
+        mon = [a for a in tagged_articles if a.get("is_approved_for_monitoring")]
+        ts = stage_stats.tagging_stats(mon or tagged_articles)
+        bd = stage_stats.brand_breakdown(
+            mon or tagged_articles, brand=brand,
+            competitors=(await _cfg_competitors(session_id)))
+        html_body = stage_report.home_snapshot_html(
+            tid, brand, ts, bd, dashboard_url=state.get("dashboard_url", ""),
+            in_dashboard=monitoring, dropped=max(0, approved - monitoring))
 
     attachments: list[tuple[str, bytes, str]] = []
     if channel != "web":

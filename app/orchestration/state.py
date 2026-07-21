@@ -30,10 +30,13 @@ class PipelineState(TypedDict, total=False):
     monitoring_count: int         # rows kept for monitoring (feed the final dashboard)
 
     # gate outcomes ("approved" | "changes" | None while waiting)
+    plan_decision: str | None
+    plan_feedback: str
     gate1_decision: str | None
     gate1_feedback: str
     gate2_decision: str | None
     gate2_feedback: str
+    tagging_additions: list[str]   # user-requested extra data points for this run
 
     # artifact pointers
     source_file_key: str

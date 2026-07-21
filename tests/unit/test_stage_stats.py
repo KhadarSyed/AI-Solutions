@@ -23,6 +23,18 @@ def test_collection_counts_by_group_and_subject():
     assert ("BeOne", 2) in s["subject_series"]
     assert ("Amway", 1) in s["subject_series"]
     assert "Amway, Herbalife" in s["summary"]
+    # KPI rollups for the collection gate
+    assert s["country_count"] == 2          # US, IN
+    assert dict(s["top_publications"]).get("Reuters") == 2
+    assert dict(s["top_authors"]).get("Jane Roe") == 1
+
+
+def test_brand_breakdown_sov_and_sentiment():
+    b = stage_stats.brand_breakdown(ARTS, brand="BeOne", competitors=["Amway", "Herbalife"])
+    sov = dict(b["sov_series"])
+    assert sov.get("BeOne") == 2 and sov.get("Amway") == 1
+    sent = {n: s for n, s in b["sentiment_series"]}
+    assert sent["BeOne"]["POS"] == 1 and sent["BeOne"]["NEG"] == 1
 
 
 def test_tagging_stats_enriched_themes_peaks():
