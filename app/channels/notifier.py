@@ -19,6 +19,28 @@ def register_adapter(channel: str, adapter: ChannelAdapter) -> None:
     _adapters[channel] = adapter
 
 
+async def _task_cc(state: PipelineState) -> list[str]:
+    """CC list for the task: from run state + the persisted run row (so CC added in a
+    later reply also reaches every subsequent message)."""
+    import contextlib
+
+    cc = list((state.get("origin_address") or {}).get("cc", []))
+    run_id = state.get("run_id")
+    if run_id:
+        with contextlib.suppress(Exception):
+            import uuid as _uuid
+
+            from app.db.base import get_sessionmaker
+            from app.db.models import Run
+
+            async with get_sessionmaker()() as db:
+                run = await db.get(Run, _uuid.UUID(str(run_id)))
+            for e in (run.origin_address or {}).get("cc", []) if run else []:
+                if e and e.lower() not in [x.lower() for x in cc]:
+                    cc.append(e)
+    return cc
+
+
 def _task_subject(state: PipelineState) -> str:
     """ONE subject per task — every message (acks, gates, status, completion) shares
     it so the whole task collapses into a single email thread. The Task-ID tag also
@@ -51,9 +73,10 @@ async def notify_agent(state: PipelineState, agent: str, phase: str, message: st
     if adapter is None:
         return
     icon = _AGENT_ICON.get(agent, "•")
+    cc = await _task_cc(state)
     with contextlib.suppress(Exception):
         await adapter.send(state.get("origin_address", {}),
-                           OutboundMessage(subject=_task_subject(state),
+                           OutboundMessage(subject=_task_subject(state), cc=cc,
                                            text=f"{icon} {agent} Agent {phase} — {message}"))
 
 
@@ -71,9 +94,11 @@ async def _deliver(state: PipelineState, event: str, message: str,
     if adapter is None:
         log.info("notifier.no_adapter", channel=channel)  # web/scheduler: stream only
         return
+    cc = await _task_cc(state)
     await adapter.send(
         state.get("origin_address", {}),
-        OutboundMessage(subject=subject, text=message, html=html, attachments=attachments),
+        OutboundMessage(subject=subject, text=message, html=html, attachments=attachments,
+                        cc=cc),
     )
 
 

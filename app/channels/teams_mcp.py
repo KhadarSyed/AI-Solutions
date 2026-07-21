@@ -164,6 +164,7 @@ class TeamsMcpAdapter(ChannelAdapter):
                                "contentType": mime or "application/octet-stream",
                                "contentBytesBase64": base64.b64encode(data).decode()})
 
+        cc = message.cc or address.get("cc") or []
         msg_id = address.get("message_id")
         if msg_id:
             # reply comment renders as HTML in-thread when we have a styled body
@@ -173,6 +174,8 @@ class TeamsMcpAdapter(ChannelAdapter):
                     "subject": message.subject or "PR Intelligence Agent",
                     "body": message.html or message.text,
                     "contentType": "HTML" if message.html else "Text"}
+        if cc:
+            args["cc"] = cc
         if inline:
             args["attachments"] = inline
         if attach_items:

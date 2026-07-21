@@ -11,6 +11,7 @@ from app.api.routes.dashboards import router as dashboards_router
 from app.api.routes.monitor import router as monitor_router
 from app.api.routes.projects import router as projects_router
 from app.api.routes.report import router as report_router
+from app.api.routes.reports import router as reports_router
 from app.api.routes.review import router as review_router
 from app.api.routes.runs import router as runs_router
 from app.api.routes.sessions import router as sessions_router
@@ -100,6 +101,7 @@ def create_app() -> FastAPI:
     app.include_router(charts_router)
     app.include_router(dashboards_router)
     app.include_router(report_router)
+    app.include_router(reports_router)
     app.include_router(runs_router)
     app.include_router(ws_runs_router)
     app.include_router(ws_qb_router)

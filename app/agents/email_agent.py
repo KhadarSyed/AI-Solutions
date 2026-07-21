@@ -192,6 +192,57 @@ async def _answer_query(project_id: str, run: Run | None, inbound: ChannelInboun
     return "\n\n".join(parts) or "I couldn't find grounded coverage for that question."
 
 
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_REPORTS_RE = re.compile(
+    r"\b(list|show|send|resend|latest|previous|past|my|all)\b[^\n]*\breports?\b", re.I)
+
+
+async def _reports_reply(project_id: str, brand: str) -> str:
+    """List the archived reports (newest first) for the project, optionally by brand."""
+    from sqlalchemy import desc, select
+
+    from app.db.models import Run
+
+    async with get_sessionmaker()() as db:
+        rows = (await db.execute(
+            select(Run).where(Run.graph_name == "pipeline", Run.status == "completed")
+            .order_by(desc(Run.created_at)).limit(60))).scalars().all()
+    lines: list[str] = []
+    for r in rows:
+        addr = r.origin_address or {}
+        if brand and brand.lower() not in (addr.get("brand", "") or "").lower():
+            continue
+        when = r.created_at.strftime("%d %b %Y %H:%M") if r.created_at else ""
+        url = addr.get("dashboard_url") or ""
+        lines.append(f"• [{addr.get('task_id', '?')}] {addr.get('brand', '')} — {when}"
+                     + (f"\n  {url}" if url else ""))
+        if len(lines) >= 15:
+            break
+    if not lines:
+        return (f"I don't have any saved reports{f' for {brand}' if brand else ''} yet. "
+                "Trigger one with 'Monitor <Brand>'.")
+    head = f"Your saved {brand} reports" if brand else "Your saved reports"
+    return f"{head} (newest first):\n\n" + "\n".join(lines)
+
+
+def _parse_cc(text: str) -> list[str]:
+    """Emails after a 'cc:' / 'cc ' cue in the message body."""
+    out: list[str] = []
+    for m in re.finditer(r"\bcc\b[:\s]+([^\n]+)", text or "", re.I):
+        out += _EMAIL_RE.findall(m.group(1))
+    return out
+
+
+def _merge_cc(*lists) -> list[str]:
+    seen: list[str] = []
+    for lst in lists:
+        for e in lst or []:
+            e = e.strip()
+            if e and e.lower() not in [x.lower() for x in seen]:
+                seen.append(e)
+    return seen
+
+
 async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> dict:
     """Create a session for the brand and launch the pipeline on the origin channel,
     so both human gates come back to wherever the request arrived."""
@@ -217,6 +268,8 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
         await db.flush()
         sid = str(row.id)
 
+    # Cc from the trigger (header) + any "cc: a@x, b@y" the user typed — kept for the task
+    cc = _merge_cc(getattr(inbound, "cc", []), _parse_cc(inbound.text))
     run_id = await get_run_manager().start(
         graph_name="pipeline",
         input_state={"project_id": str(project.id), "session_id": sid,
@@ -224,7 +277,7 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
                      "competitors": competitors, "task_id": task_id},
         session_id=sid,
         origin_channel=inbound.channel,
-        origin_address={**(inbound.address or {}), "task_id": task_id},
+        origin_address={**(inbound.address or {}), "task_id": task_id, "cc": cc},
     )
     log.info("inbound.start_run", brand=brand, channel=inbound.channel,
              run_id=run_id, task_id=task_id)
@@ -283,6 +336,19 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
 
         decision = intent.gate_decision or "approved"
         resume_payload: dict = {"decision": decision, "feedback": inbound.text}
+        # CC added in this reply (header or 'cc:' text) → persist on the run so every
+        # subsequent agent message includes them (notifier._task_cc reads the run row).
+        new_cc = _merge_cc(getattr(inbound, "cc", []), _parse_cc(inbound.text))
+        if new_cc:
+            with contextlib.suppress(Exception):
+                from app.db.models import Run as RunRow
+
+                async with get_sessionmaker()() as db, db.begin():
+                    fresh = await db.get(RunRow, run.id)
+                    if fresh is not None:
+                        addr = dict(fresh.origin_address or {})
+                        addr["cc"] = _merge_cc(addr.get("cc", []), new_cc)
+                        fresh.origin_address = addr
         # An edited tagged CSV attached to a Gate-2 approval is the monitoring opt-out:
         # persist it so gate2_approval can drop the rows the user set to Monitoring=FALSE.
         if decision == "approved":
@@ -304,6 +370,15 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
                          else "Re-running with your changes.")),
             ))
         return {"handled": True, "action": f"gate_{decision}", "run_id": str(run.id)}
+
+    # "list / send my reports" → the report archive (before the grounded Q&A path)
+    if _REPORTS_RE.search(inbound.text):
+        listing = await _reports_reply(project_id, _detect_brand(inbound.text))
+        with contextlib.suppress(Exception):
+            await adapter.send(inbound.address, OutboundMessage(
+                subject=f"Re: {inbound.subject}", text=listing,
+                cc=_merge_cc(getattr(inbound, "cc", []), _parse_cc(inbound.text))))
+        return {"handled": True, "action": "list_reports"}
 
     # question / report / change → grounded reply (change-request re-run is scoped to
     # the pipeline's gate-changes loop; a bare change with no pending gate is answered)

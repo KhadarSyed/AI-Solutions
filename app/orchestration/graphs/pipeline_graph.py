@@ -468,6 +468,20 @@ async def deliver(state: PipelineState) -> dict:
     if dashboard_url:
         state["dashboard_url"] = dashboard_url
 
+    # persist the report to the run row so it's listable/retrievable later (archive)
+    with contextlib.suppress(Exception):
+        from app.db.base import get_sessionmaker
+        from app.db.models import Run
+
+        async with get_sessionmaker()() as db, db.begin():
+            run = await db.get(Run, uuid.UUID(str(state["run_id"])))
+            if run is not None:
+                addr = dict(run.origin_address or {})
+                addr.update(dashboard_url=dashboard_url or addr.get("dashboard_url"),
+                            brand=state.get("brand"),
+                            monitoring_count=state.get("monitoring_count"))
+                run.origin_address = addr
+
     with contextlib.suppress(Exception):
         from app.channels.notifier import notify_complete
 

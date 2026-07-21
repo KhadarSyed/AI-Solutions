@@ -15,6 +15,7 @@ class OutboundMessage:
     subject: str = ""
     html: str = ""                     # rich body; email sends it as the HTML alternative
     attachments: list[tuple[str, bytes, str]] = field(default_factory=list)  # name, data, mime
+    cc: list[str] = field(default_factory=list)   # additional recipients, kept for the task
 
 
 @dataclass
@@ -27,6 +28,7 @@ class ChannelInbound:
     address: dict = field(default_factory=dict)   # reply-addressing for this thread
     raw_id: str = ""                   # dedupe key (Message-ID / mention id)
     attachments: list[tuple[str, bytes, str]] = field(default_factory=list)  # name, data, mime
+    cc: list[str] = field(default_factory=list)   # Cc recipients on the trigger, if any
 
 
 class ChannelAdapter(ABC):

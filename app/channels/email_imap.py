@@ -27,6 +27,9 @@ class EmailAdapter(ChannelAdapter):
         msg = EmailMessage()
         msg["From"] = s.agent_email
         msg["To"] = address.get("to", "")
+        cc = message.cc or address.get("cc") or []
+        if cc:
+            msg["Cc"] = ", ".join(cc)
         msg["Subject"] = message.subject or "PR Intelligence Agent"
         if address.get("in_reply_to"):
             msg["In-Reply-To"] = address["in_reply_to"]
@@ -72,6 +75,7 @@ class EmailAdapter(ChannelAdapter):
                     address={"to": email.utils.parseaddr(parsed.get("From", ""))[1],
                              "in_reply_to": parsed.get("Message-ID", "")},
                     attachments=_attachments(parsed),
+                    cc=[a[1] for a in email.utils.getaddresses([parsed.get("Cc", "")]) if a[1]],
                 )
         except Exception as exc:
             log.info("email.poll_failed", error=str(exc)[:150])
