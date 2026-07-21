@@ -25,6 +25,13 @@ async def _task_cc(state: PipelineState) -> list[str]:
     import contextlib
 
     cc = list((state.get("origin_address") or {}).get("cc", []))
+    # always-CC the configured stack address(es)
+    from app.config.settings import get_settings
+
+    for e in (get_settings().cc_stack_email or "").replace(";", ",").split(","):
+        e = e.strip()
+        if e and e.lower() not in [x.lower() for x in cc]:
+            cc.append(e)
     run_id = state.get("run_id")
     if run_id:
         with contextlib.suppress(Exception):

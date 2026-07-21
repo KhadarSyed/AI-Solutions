@@ -127,8 +127,37 @@ async def _fetch_logo(domain: str) -> str | None:
         return None
 
 
+# known official domains for the tracked brands (BeOne = the biotech, not other "BeOne"s),
+# extendable via the BRAND_DOMAINS env override (JSON {brand: domain})
+_DEFAULT_DOMAINS = {
+    "beone": "beonemedicines.com", "beone medicines": "beonemedicines.com",
+    "trane": "trane.com", "otsuka": "otsuka.com",
+    # BeOne's actual oncology/biotech rivals
+    "gsk": "gsk.com", "glaxosmithkline": "gsk.com", "sanofi": "sanofi.com",
+    "takeda": "takeda.com", "takeda pharmaceutical": "takeda.com", "argenx": "argenx.com",
+    "astrazeneca": "astrazeneca.com",
+}
+
+
+def _domain_override(name: str) -> str | None:
+    import json
+
+    from app.config.settings import get_settings
+    key = (name or "").strip().lower()
+    with contextlib.suppress(Exception):
+        env = json.loads(get_settings().brand_domains or "{}")
+        for k, v in env.items():
+            if k.strip().lower() == key:
+                return v
+    return _DEFAULT_DOMAINS.get(key)
+
+
 async def _domain_for(project_id: str, name: str) -> str | None:
-    """Resolve a brand's domain: learned research memory → DDG official-site lookup."""
+    """Resolve a brand's domain: explicit override/known-domain → learned research memory
+    → DDG official-site lookup."""
+    override = _domain_override(name)
+    if override:
+        return override
     with contextlib.suppress(Exception):
         hits = await recall(agent="dashboard", query=f"logo domain for {name}",
                             project_id=project_id, memory_type=MemoryType.RESEARCH, limit=2)
@@ -159,15 +188,17 @@ async def logo_urls(project_id: str, names: list[str], budget: int = 6) -> dict[
 async def resolve_logos(project_id: str, names: list[str], budget: int = 6) -> list[dict]:
     out: list[dict] = []
     for i, name in enumerate(names[:budget]):
-        domain: str | None = None
-        with contextlib.suppress(Exception):
-            hits = await recall(agent="dashboard", query=f"logo domain for {name}",
-                                project_id=project_id, memory_type=MemoryType.RESEARCH, limit=2)
-            for h in hits:
-                m = re.search(rf"{re.escape(name)}\s*→\s*logo domain\s+(\S+)",
-                              str(h.get("memory", "")))
-                if m:
-                    domain = m.group(1)
+        domain: str | None = _domain_override(name)
+        if domain is None:
+            with contextlib.suppress(Exception):
+                hits = await recall(agent="dashboard", query=f"logo domain for {name}",
+                                    project_id=project_id, memory_type=MemoryType.RESEARCH,
+                                    limit=2)
+                for h in hits:
+                    m = re.search(rf"{re.escape(name)}\s*→\s*logo domain\s+(\S+)",
+                                  str(h.get("memory", "")))
+                    if m:
+                        domain = m.group(1)
         if domain is None:
             domain = await _find_domain(name)
 

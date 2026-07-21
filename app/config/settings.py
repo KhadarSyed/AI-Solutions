@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     # (a dashboard served from the API is then same-origin and works with no config).
     chat_api_base: str = ""
     public_api_base: str = ""                       # public HTTPS base for deployed reports
+    # always-CC these on every task email (comma-separated), in addition to any trigger/reply CC
+    cc_stack_email: str = ""
+    # brand → official domain overrides for logo resolution (JSON, e.g. {"BeOne":"beonemedicines.com"})
+    brand_domains: str = ""
     pexels_api_key: str = ""
 
     # LLM — claude primary, Azure OpenAI is the fallback; per-stage overrides
