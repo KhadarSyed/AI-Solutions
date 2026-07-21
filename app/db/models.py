@@ -191,7 +191,9 @@ class ArticleEmbedding(Base, TimestampMixin):
     project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id"), nullable=False)
     session_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("sessions.id"), nullable=False)
     article_id: Mapped[str] = mapped_column(String(20), nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(Vector(1536), nullable=False)
+    # dim matches the active EMBEDDING_BACKEND: local bge-small = 384 (default).
+    # Switch back to 1536 (+ migration) only if EMBEDDING_BACKEND=azure.
+    embedding: Mapped[list[float]] = mapped_column(Vector(384), nullable=False)
     section: Mapped[str | None] = mapped_column(String(120))
     sentiment: Mapped[str | None] = mapped_column(String(3))
     published_at: Mapped[date | None] = mapped_column(Date)

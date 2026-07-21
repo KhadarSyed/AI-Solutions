@@ -35,6 +35,13 @@ class Settings(BaseSettings):
     azure_openai_api_version: str = "2024-10-21"
     azure_openai_chat_deployment: str = "gpt-4o"
     azure_openai_embed_deployment: str = "text-embedding-3-small"
+
+    # Embeddings backend: "local" (fastembed ONNX, no API — default) or "azure".
+    # The article_embeddings column dimension must match the active backend
+    # (local bge-small = 384; azure text-embedding-3-small = 1536).
+    embedding_backend: str = "local"
+    local_embedding_model: str = "BAAI/bge-small-en-v1.5"
+    local_embedding_dim: int = 384
     max_output_tokens: int = 32000
     llm_batch_size: int = 20
     llm_concurrency: int = 5

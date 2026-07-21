@@ -30,6 +30,8 @@ dependencies = [
     "mem0ai[graph]>=1.0,<2.0",
     # Retrieval / rerank
     "flashrank>=0.2",
+    # Local ONNX embeddings (no external API) — semantic recall without Azure
+    "fastembed>=0.4",
     # Guardrails
     "nemoguardrails>=0.11",
     # HTTP / ingestion
