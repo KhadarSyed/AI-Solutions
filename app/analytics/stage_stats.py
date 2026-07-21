@@ -15,7 +15,7 @@ def _pct(part: int, whole: int) -> int:
 
 
 def collection_stats(articles: list[dict], *, brand: str, competitors: list[str]) -> dict:
-    """Stage 1 — coverage found per brand / competitor / industry."""
+    """Collection gate — coverage per brand/competitor/industry + KPI rollups."""
     total = len(articles)
     by_group = Counter(a.get("query_group", "") for a in articles)
     by_subject = Counter((a.get("subject_brand") or "").strip() for a in articles)
@@ -28,19 +28,50 @@ def collection_stats(articles: list[dict], *, brand: str, competitors: list[str]
     subject_series = [(c, by_subject.get(c, 0)) for c in ([brand, *competitors])]
     subject_series = [(k, v) for k, v in subject_series if v] or [(brand, brand_n)]
 
+    countries = {(a.get("country") or "").strip().lower()
+                 for a in articles if (a.get("country") or "").strip().lower() not in ("", "all")}
+    pubs = Counter((a.get("publisher_name") or a.get("publisher_domain") or "").strip()
+                   for a in articles)
+    authors = Counter((a.get("author") or "").strip() for a in articles)
+
     comp_list = ", ".join(competitors) if competitors else "none"
     line1 = (f"Collected {total} articles — {brand_n} on {brand} "
              f"({_pct(brand_n, total)}%), {comp_n} across {len(competitors)} competitors, "
              f"{ind_n} on the wider industry.")
-    line2 = f"Competitors tracked: {comp_list}."
+    line2 = (f"Across {len(countries) or 1} countr{'y' if len(countries) == 1 else 'ies'}; "
+             f"competitors tracked: {comp_list}.")
     return {
         "total": total,
+        "country_count": len(countries),
         "group_series": group_series,
         "subject_series": subject_series,
+        "top_publications": _top(pubs, 5),
+        "top_authors": _top(authors, 5),
         "competitors": list(competitors),
         "brand": brand,
         "summary": f"{line1}\n{line2}",
     }
+
+
+def brand_breakdown(articles: list[dict], *, brand: str, competitors: list[str]) -> dict:
+    """Per-brand Share-of-Voice (single primary attribution) and sentiment split, for the
+    tagged-results charts. Reuses the impact attributor so SOV matches the dashboard."""
+    from app.analytics.chart_builders.impact import _attribute
+
+    sov: Counter = Counter()
+    sent: dict[str, Counter] = {name: Counter() for name in [brand, *competitors]}
+    for a in articles:
+        who = _attribute(a, brand, competitors)
+        if who:
+            sov[who] += 1
+            sent.setdefault(who, Counter())[a.get("xai_sentiment", "NEU")] += 1
+    order = [brand, *competitors]
+    sov_series = [(n, sov.get(n, 0)) for n in order if sov.get(n, 0)]
+    sentiment_series = [
+        (n, {s: sent[n].get(s, 0) for s in ("POS", "NEU", "NEG")})
+        for n in order if sov.get(n, 0)
+    ]
+    return {"sov_series": sov_series, "sentiment_series": sentiment_series}
 
 
 def _is_enriched(a: dict) -> bool:
@@ -54,6 +85,7 @@ def tagging_stats(articles: list[dict]) -> dict:
 
     themes = Counter((a.get("theme_primary") or a.get("xai_theme") or "").strip()
                      for a in articles)
+    signals = Counter(s for a in articles for s in (a.get("signals") or []))
     pubs = Counter((a.get("publisher_name") or a.get("publisher_domain") or "").strip()
                    for a in articles)
     authors = Counter((a.get("author") or "").strip() for a in articles)
@@ -65,6 +97,7 @@ def tagging_stats(articles: list[dict]) -> dict:
     volume_peaks = _top(by_date, 3)
 
     top_themes = _top(themes, 5)
+    top_signals = _top(signals, 5)
     top_pubs = _top(pubs, 5)
     top_authors = _top(authors, 5)
 
@@ -78,6 +111,7 @@ def tagging_stats(articles: list[dict]) -> dict:
         "tagged": tagged,
         "enriched": enriched,
         "top_themes": top_themes,
+        "top_signals": top_signals,
         "top_publications": top_pubs,
         "top_authors": top_authors,
         "volume_series": volume_series,
