@@ -476,6 +476,8 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
 </div>
 <script>
 const CHAT={chat_json};
+// empty api_base → same-origin (dashboard served from the API), else the configured public base
+const CHAT_API=(CHAT.api_base||window.location.origin).replace(/\\/$/,'');
 function chatToggle(){{document.getElementById('chatPanel').classList.toggle('open');}}
 function chatEsc(s){{return (s||'').replace(/[&<>]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]));}}
 function chatSend(){{
@@ -483,7 +485,7 @@ function chatSend(){{
   const q=(inp.value||'').trim(); if(!q)return; inp.value='';
   log.insertAdjacentHTML('beforeend','<div class="chat-msg user">'+chatEsc(q)+'</div>');
   const t=document.createElement('div'); t.className='chat-msg bot'; t.textContent='…'; log.appendChild(t); log.scrollTop=log.scrollHeight;
-  fetch(CHAT.api_base+'/chat/'+CHAT.session_id,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:q,token:CHAT.token}})}})
+  fetch(CHAT_API+'/chat/'+CHAT.session_id,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:q,token:CHAT.token}})}})
    .then(r=>r.json().then(d=>({{ok:r.ok,d}})))
    .then(o=>{{ if(!o.ok){{t.textContent=(o.d&&o.d.detail)||'That request failed.';}} else {{ t.innerHTML=chatEsc(o.d.answer).replace(/\\n/g,'<br>')+'<span class="ts">'+new Date(o.d.timestamp).toLocaleString()+'</span>'; }} log.scrollTop=log.scrollHeight; }})
    .catch(()=>{{t.textContent='Network error — is the agent reachable?';}});

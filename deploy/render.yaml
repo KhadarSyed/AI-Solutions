@@ -44,7 +44,14 @@ services:
       - { key: AZURE_OPENAI_API_KEY,        sync: false }
       - { key: AZURE_OPENAI_ENDPOINT,       sync: false }
       - { key: AZURE_OPENAI_CHAT_DEPLOYMENT,  value: gpt-4o }
-      - { key: AZURE_OPENAI_EMBED_DEPLOYMENT, sync: false }  # must be a REAL embedding deployment
+      # Embeddings default to the bundled local ONNX model (no external API needed).
+      # Set EMBEDDING_BACKEND=azure + a REAL AZURE_OPENAI_EMBED_DEPLOYMENT to use Azure.
+      - { key: EMBEDDING_BACKEND,           value: local }
+      - { key: AZURE_OPENAI_EMBED_DEPLOYMENT, sync: false }
+      # Public HTTPS base the in-report chat calls back to. Set to this service's URL,
+      # e.g. https://prsol-api.onrender.com — so "Ask the data agent" reaches the backend
+      # from the Vercel-hosted report (localhost is never reachable off the box).
+      - { key: PUBLIC_API_BASE,             sync: false }
       - { key: TEAMS_MCP_URL,               value: https://teams-mcp-emrk.onrender.com/mcp }
       - { key: XPOZ_API_KEY,                sync: false }
       - { key: XPOZ_MCP_URL,                value: https://mcp.xpoz.ai/mcp }

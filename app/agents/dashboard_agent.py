@@ -42,7 +42,7 @@ class DashboardRequest(BaseModel):
     user_id: str | None = None
     data_sources: list[str] = Field(default_factory=list)   # artifact://, service://, inline handled by caller
     requirements: DashboardRequirements = Field(default_factory=DashboardRequirements)
-    theme: str = "dark"                                     # dark | light
+    theme: str = "light"                                    # light | dark (light is default)
     reuse_liked_template: bool = True
     feedback_context: str = ""                              # latest user feedback to honor
 
@@ -192,8 +192,12 @@ def _chat_config(session_id: str) -> dict:
     from app.config.settings import get_settings
     from app.security.auth import chat_token
 
+    s = get_settings()
+    # Prefer the public base (set at deploy); empty → the widget uses window.location.origin
+    # so a dashboard served from the API is same-origin and the chat just works.
+    api_base = (s.public_api_base or s.chat_api_base).rstrip("/")
     return {"session_id": session_id, "token": chat_token(session_id),
-            "api_base": get_settings().chat_api_base.rstrip("/"), "window_days": 3}
+            "api_base": api_base, "window_days": 3}
 
 
 async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:

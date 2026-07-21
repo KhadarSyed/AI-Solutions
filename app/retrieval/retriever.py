@@ -46,19 +46,31 @@ class RetrievalResult:
 async def _recall(
     *, project_id: UUID | str, query: str, k: int, approved_only: bool, **filters
 ) -> list[RecallHit]:
-    """Vector recall when embeddings are live and it returns anything; else lexical."""
+    """Hybrid recall: union of vector (semantic) and lexical (keyword) candidates,
+    de-duplicated by article id. Semantic recall alone misses meta/keyword queries
+    ("main themes", a publisher name); lexical alone misses paraphrase. The union feeds
+    one FlashRank rerank + the relevance floor, so grounding stays strict."""
+    vector_hits: list[RecallHit] = []
     if await embeddings_available():
         try:
-            hits = await recall_topk(
+            vector_hits = await recall_topk(
                 project_id=project_id, query=query, k=k, approved_only=approved_only, **filters
             )
-            if hits:
-                return hits
         except Exception as exc:
             log.info("retrieve.vector_failed", error=str(exc)[:160])
-    return await recall_topk_lexical(
-        project_id=project_id, query=query, k=k, approved_only=approved_only, **filters
-    )
+
+    lexical_hits: list[RecallHit] = []
+    try:
+        lexical_hits = await recall_topk_lexical(
+            project_id=project_id, query=query, k=k, approved_only=approved_only, **filters
+        )
+    except Exception as exc:
+        log.info("retrieve.lexical_failed", error=str(exc)[:160])
+
+    merged: dict[str, RecallHit] = {}
+    for h in [*vector_hits, *lexical_hits]:
+        merged.setdefault(h.article_id, h)
+    return list(merged.values())
 
 
 async def retrieve(
