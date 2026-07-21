@@ -123,6 +123,12 @@ class Settings(BaseSettings):
                              # gate replies + follow-up intents must surface too
                              "approve,approved,proceed,looks good,go ahead,"
                              "changes,revise,reject,RT")
+    # Zero-touch onboarding: when a verified-domain sender triggers monitoring for a brand
+    # that has no project yet, auto-provision it (industry self-resolved) instead of needing
+    # a human to pre-create the project. Comma-separated domains; EMPTY = disabled (strict
+    # stakeholder-only, no auto-provisioning). Sender's From is only trusted for this when
+    # its domain is on this allowlist.
+    authorized_sender_domains: str = ""
     smtp_host: str = "localhost"
     smtp_port: int = 3025
     imap_host: str = "localhost"

@@ -126,6 +126,60 @@ async def _match_project(inbound: ChannelInbound) -> tuple[Project | None, bool]
     return None, False
 
 
+def _authorized_domain(sender: str) -> bool:
+    """True when the sender's domain is on the auto-provisioning allowlist. Off by default
+    (empty setting) so nothing is auto-created unless an operator opts in."""
+    from app.config.settings import get_settings
+
+    allow = [d.strip().lower().lstrip("@")
+             for d in (get_settings().authorized_sender_domains or "")
+             .replace(";", ",").split(",") if d.strip()]
+    if not allow:
+        return False
+    domains = {c.split("@", 1)[1] for c in _sender_candidates(sender) if "@" in c}
+    return any(d in allow for d in domains)
+
+
+_MONITOR_SUBJECT_RE = re.compile(
+    r"\b(?:monitor|start\s+monitoring|track|begin\s+monitoring|launch)\s+([A-Za-z0-9][\w&.\- ]{1,40})",
+    re.I)
+
+
+def _extract_brand_generic(subject: str, text: str) -> str:
+    """Pull the brand out of a 'Monitor <Brand>' style trigger for brands we don't yet
+    have a project for. Known brands still go through _detect_brand."""
+    known = _detect_brand(f"{subject}\n{text}")
+    if known:
+        return known
+    m = _MONITOR_SUBJECT_RE.search(subject or "") or _MONITOR_SUBJECT_RE.search(text or "")
+    if not m:
+        return ""
+    # trim trailing filler ("... for the last 2 days", "coverage", "news", "pr")
+    brand = re.split(r"\b(for|over|during|coverage|news|media|pr|monitoring)\b",
+                     m.group(1), maxsplit=1, flags=re.I)[0]
+    return " ".join(brand.split()).strip(" -&.").title()
+
+
+async def _provision_project(brand: str, sender: str) -> Project:
+    """Create a project for a brand on first authorized trigger — industry self-resolves on
+    the first run. This is what removes the human 'set up the project' step in production."""
+    from app.agents.competitor_agent import ensure_industry
+
+    email = next((c for c in _sender_candidates(sender) if "@" in c), sender)
+    async with get_sessionmaker()() as db, db.begin():
+        p = Project(name=f"{brand} Monitoring", brand_name=brand,
+                    stakeholder_emails=[email])
+        db.add(p)
+        await db.flush()
+        pid = str(p.id)
+    with contextlib.suppress(Exception):
+        await ensure_industry(brand, pid)          # research + persist industry now
+    async with get_sessionmaker()() as db:
+        fresh = await db.get(Project, uuid.UUID(pid))
+    log.info("inbound.project_provisioned", brand=brand, project_id=pid, sender=email)
+    return fresh
+
+
 async def _pending_gate_run(project_id: str, task_id: str | None = None) -> Run | None:
     async with get_sessionmaker()() as db:
         q = select(Run).where(
@@ -278,7 +332,7 @@ async def _thread_reply(inbound: ChannelInbound, adapter, text: str, *,
 async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> dict:
     """Create a session for the brand and launch the pipeline on the origin channel,
     so both human gates come back to wherever the request arrived."""
-    from app.agents.competitor_agent import resolve_competitors
+    from app.agents.competitor_agent import ensure_industry, resolve_competitors
     from app.db.models import GeneratedQuery
     from app.orchestration.run_manager import get_run_manager
     from app.orchestration.task_id import make_task_id
@@ -286,9 +340,12 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
 
     brand = brand or project.brand_name
     task_id = await make_task_id(brand)
+    # Self-configure: resolve the industry from the brand when the project has none, so
+    # entity/competitor disambiguation and the query plan are correct with no human setup.
+    industry = await ensure_industry(brand, str(project.id)) or project.industry
     override = _parse_competitor_override(inbound.text)   # user-named competitors win
     competitors = await resolve_competitors(brand, str(project.id), override=override)
-    query_groups = build_query_plan(brand, competitors, project.industry)
+    query_groups = build_query_plan(brand, competitors, industry)
     async with get_sessionmaker()() as db, db.begin():
         gq = GeneratedQuery(project_id=project.id, brand=brand,
                             query_groups=query_groups, competitors=competitors)
@@ -320,8 +377,17 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
     # Unverified senders are never authoritative — the From field is spoofable.
     project, sender_verified = await _match_project(inbound)
     if project is None or not sender_verified:
-        log.info("inbound.unverified", sender=inbound.sender)
-        return {"handled": False, "reason": "sender is not a registered stakeholder"}
+        # Zero-touch onboarding: an authorized-domain sender naming a brand that has no
+        # project yet gets one auto-provisioned (industry self-resolves on the first run).
+        # Outside the allowlist we stay strict — the From field is spoofable.
+        brand = _extract_brand_generic(inbound.subject, inbound.text)
+        if brand and _authorized_domain(inbound.sender):
+            project = await _provision_project(brand, inbound.sender)
+            sender_verified = True
+            log.info("inbound.auto_provisioned", brand=brand, sender=inbound.sender)
+        else:
+            log.info("inbound.unverified", sender=inbound.sender)
+            return {"handled": False, "reason": "sender is not a registered stakeholder"}
 
     # subject gating — never act on arbitrary inbox mail (email channel only)
     if inbound.channel == "email" and not subject_allowed(inbound.subject, await _all_brands()):

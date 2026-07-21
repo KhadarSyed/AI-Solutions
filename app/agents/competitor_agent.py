@@ -23,6 +23,13 @@ class _Competitors(BaseModel):
     )
 
 
+class _Industry(BaseModel):
+    industry: str = Field(
+        description="the brand's primary industry/sector, specific enough to disambiguate "
+                    "same-named companies (e.g. 'oncology & hematology biotech', not just "
+                    "'healthcare'); a short phrase, no sentence")
+
+
 async def _from_project(project_id: str) -> list[str]:
     async with get_sessionmaker()() as db:
         p = await db.get(Project, uuid.UUID(project_id))
@@ -48,11 +55,50 @@ async def _project_industry(project_id: str) -> str:
     return ""
 
 
+async def _research_industry(brand: str) -> str:
+    agent = GuardedAgent(
+        purpose="industry_research", stage="query_builder",
+        system_prompt=(
+            "Identify the primary industry/sector of the given company or brand. Be specific "
+            "enough to disambiguate same-named companies and to find true competitors "
+            "(e.g. 'oncology & hematology biotechnology', 'HVAC & building climate systems', "
+            "'multi-level-marketing consumer goods'). Return a short phrase only."),
+        output_type=_Industry, temperature=0.0, cacheable=True,
+    )
+    res = await agent.run(f"Brand: {brand}")
+    return (res.industry or "").strip()
+
+
+async def ensure_industry(brand: str, project_id: str) -> str:
+    """The project's industry, resolving + persisting it on first use when blank.
+
+    This is what lets the agent run hands-off in production: a project created with no
+    industry (auto-provisioned, or seeded before we knew it) self-heals — the industry is
+    researched once, stored, and then drives correct competitor/entity disambiguation for
+    this and every later run. No human ever sets it."""
+    existing = await _project_industry(project_id)
+    if existing:
+        return existing
+    try:
+        industry = await _research_industry(brand)
+    except Exception as exc:
+        log.warning("industry.research_failed", brand=brand, error=str(exc)[:150])
+        return ""
+    if industry:
+        with contextlib.suppress(Exception):
+            async with get_sessionmaker()() as db, db.begin():
+                await db.execute(update(Project).where(Project.id == uuid.UUID(project_id))
+                                 .values(industry=industry))
+        log.info("industry.resolved", brand=brand, industry=industry)
+    return industry
+
+
 async def _research(brand: str, project_id: str) -> list[str]:
     # The industry disambiguates same-named companies (e.g. "BeOne" the oncology
     # biotech vs. an identically-named consumer brand) so the model resolves the RIGHT
-    # entity and its real rivals — no hard-coded competitor list.
-    industry = await _project_industry(project_id)
+    # entity and its real rivals — no hard-coded competitor list. Resolve it if the
+    # project doesn't have it yet, so competitor research is never entity-ambiguous.
+    industry = await ensure_industry(brand, project_id)
     agent = GuardedAgent(
         purpose="competitor_research", stage="query_builder",
         system_prompt=(
