@@ -23,6 +23,12 @@ class ChatBody(BaseModel):
     token: str
 
 
+class MoveBody(BaseModel):
+    article_id: str
+    section: str
+    token: str
+
+
 @router.post("/{session_id}")
 async def ask(session_id: str, body: ChatBody) -> dict:
     if not verify_chat_token(session_id, body.token):
@@ -54,3 +60,33 @@ async def ask(session_id: str, body: ChatBody) -> dict:
             parts.append(ev["data"]["text"])
     answer = "\n\n".join(parts) or "I couldn't find grounded coverage for that question."
     return {"answer": answer, "timestamp": datetime.now(UTC).isoformat()}
+
+
+@router.post("/{session_id}/section")
+async def move_section(session_id: str, body: MoveBody) -> dict:
+    """Persist a Daily-Monitoring drag: re-tag an article's section. Authed by the same
+    per-report chat token (never the admin key), scoped to this session's corpus."""
+    if not verify_chat_token(session_id, body.token):
+        raise HTTPException(403, "invalid chat token")
+    section = (body.section or "").strip()
+    if not body.article_id or not section:
+        raise HTTPException(422, "article_id and section required")
+    try:
+        sid = uuid.UUID(session_id)
+    except ValueError as exc:
+        raise HTTPException(404, "session not found") from exc
+
+    async with get_sessionmaker()() as db:
+        row = await db.get(SessionRow, sid)
+    if row is None:
+        raise HTTPException(404, "session not found")
+
+    from app.services.review_service import ReviewError, edit_tags
+
+    try:
+        await edit_tags(project_id=str(row.project_id), session_id=session_id,
+                        article_id=body.article_id, changes={"xai_section": section})
+    except ReviewError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    log.info("chat.section_moved", session=session_id, article=body.article_id, section=section)
+    return {"status": "moved", "article_id": body.article_id, "section": section}

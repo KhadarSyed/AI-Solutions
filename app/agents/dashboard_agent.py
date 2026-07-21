@@ -210,15 +210,21 @@ async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:
 
         payload = await get_artifact_store().get_json(keys.tagged_file(session_id))
         rows = [
-            {"date": str(a.get("published_date") or ""),
+            {"id": a.get("id", ""),
+             "date": str(a.get("published_date") or ""),
              "time": str(a.get("published_time") or ""),
              "title": a.get("title", ""),
+             "snippet": (a.get("content") or "")[:220],
+             "url": a.get("url", ""),
              "publisher": a.get("publisher_name") or a.get("publisher_domain", ""),
+             "author": a.get("author", ""),
+             "reach": a.get("monthly_reach") or 0,
+             "priority": bool(a.get("priority_watch")),
              "sentiment": a.get("xai_sentiment", "NEU"),
              "theme": a.get("theme_primary") or a.get("xai_theme", ""),
              "emotions": "; ".join(a.get("emotions", []) or []),
              "signals": "; ".join(a.get("signals", []) or []),
-             "section": a.get("xai_section", "")}
+             "section": a.get("xai_section", "") or "Uncategorized"}
             for a in payload.get("articles", []) if a.get("is_approved_for_monitoring")
         ]
         return rows[:limit]

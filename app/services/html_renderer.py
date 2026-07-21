@@ -282,79 +282,178 @@ def _home_cards(view_tabs: list[dict]) -> str:
             f'<div class="view-grid">{cards}</div>')
 
 
-def _daily_view(rows: list[dict]) -> str:
-    from collections import defaultdict
+_DAILY_CSS = """<style>
+.dm-wrap{display:grid;grid-template-columns:260px 1fr;gap:20px;align-items:start}
+@media (max-width:820px){.dm-wrap{grid-template-columns:1fr}}
+.dm-side{display:flex;flex-direction:column;gap:16px;position:sticky;top:76px}
+.dm-panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:16px}
+.dm-panel h4{margin:0 0 10px;font-family:var(--font-display);font-size:14px}
+.dm-secs{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:2px}
+.dm-secs li{display:flex;justify-content:space-between;gap:8px;padding:8px 10px;border-radius:9px;
+  font-size:13px;cursor:pointer;color:var(--ink);transition:background .15s}
+.dm-secs li:hover{background:var(--card2)}
+.dm-secs li.on{background:var(--accent);color:#fff}
+.dm-secs li .c{color:var(--muted);font-variant-numeric:tabular-nums}
+.dm-secs li.on .c{color:#fff;opacity:.85}
+.dm-filter label{display:block;font-size:11px;color:var(--muted);margin-bottom:8px}
+.dm-filter input{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:9px;
+  padding:8px 10px;background:var(--card2);color:var(--ink);font-size:13px}
+.dm-sec{background:var(--card);border:1px solid var(--line);border-radius:16px;margin:0 0 16px;
+  overflow:hidden}
+.dm-sec-head{display:flex;align-items:center;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);
+  font-family:var(--font-display);font-size:15px}
+.dm-sec-head .c{margin-left:auto;font-size:11px;font-weight:700;color:var(--muted);
+  background:var(--card2);border-radius:20px;padding:3px 10px}
+.dm-drop{padding:8px 10px;min-height:44px}
+.dm-drop.over{background:color-mix(in srgb,var(--accent) 8%,transparent);outline:2px dashed var(--accent)}
+.dm-art{display:flex;gap:10px;padding:12px 10px;border-bottom:1px solid var(--line);cursor:grab}
+.dm-art:last-child{border-bottom:0}
+.dm-art.drag{opacity:.4}
+.dm-handle{color:var(--muted);cursor:grab;user-select:none;font-size:15px;line-height:1.4;letter-spacing:-2px}
+.dm-dot{flex:0 0 9px;height:9px;border-radius:50%;margin-top:5px}
+.dm-pos{background:#16a34a}.dm-neu{background:#9aa2ad}.dm-neg{background:#dc2626}
+.dm-title{font-weight:600;font-size:14px;color:var(--ink);line-height:1.4}
+.dm-badge{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;border-radius:6px;padding:2px 7px;margin-left:8px;background:#fde7e1;color:#b5462f}
+.dm-meta{font-size:12px;color:var(--muted);margin-top:3px}
+.dm-snip{font-size:12.5px;color:var(--ink2,var(--muted));margin-top:5px;line-height:1.5}
+.dm-tags{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
+.dm-tag{font-size:11px;color:var(--muted);background:var(--card2);border-radius:20px;padding:2px 9px}
+.dm-save{font-size:11px;color:var(--accent);margin-left:8px}
+</style>"""
 
-    by_day: dict[str, list[dict]] = defaultdict(list)
+
+def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
+    import json as _json
+    from collections import Counter, defaultdict
+
+    if not rows:
+        return '<div class="card"><h3>Daily Monitoring</h3><p>No coverage yet.</p></div>'
+
+    by_sec: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
-        by_day[str(r.get("date", ""))[:10] or "Undated"].append(r)
-    if not by_day:
-        return '<div class="card"><h3>Daily Monitoring</h3><p>No dated coverage yet.</p></div>'
-    out = []
-    for day in sorted(by_day, reverse=True):
-        items = by_day[day]
-        rows_html = ""
-        for r in items:
-            time = _e(r.get("time", ""))
-            theme = _e(r.get("theme", ""))
-            emotions = _e(r.get("emotions", ""))
-            signals = _e(r.get("signals", ""))
-            tags = " · ".join(x for x in [theme, emotions, signals] if x)
-            search = _e(" ".join(str(r.get(k, "")) for k in
-                                 ("title", "publisher", "theme", "emotions", "signals",
-                                  "section", "time")).lower())
-            time_html = (f'<span style="margin-left:8px;font-size:11px;color:var(--muted);'
-                         f'font-weight:600;">{time}</span>' if time else "")
-            rows_html += (
-                f'<div class="daily-row" data-date="{_e(day)}" data-time="{time}" '
-                f'data-text="{search}">'
-                f'<span class="sent sent-{_e((r.get("sentiment") or "NEU").lower()[:3])}"></span>'
-                f'<div class="dr-main"><div class="dr-title">{_e(r.get("title", ""))}'
-                f'{time_html}</div>'
-                f'<div class="dr-meta">{_e(r.get("publisher", "")) or "—"} · '
-                f'{_e(r.get("section", "")) or "—"}'
-                f'{(" · " + tags) if tags else ""}</div></div></div>')
-        out.append(f'<div class="daily-day" data-date="{_e(day)}">'
-                   f'<div class="daily-date">{_e(day)}'
-                   f'<span class="daily-count">{len(items)} article'
-                   f'{"s" if len(items) != 1 else ""}</span></div>{rows_html}</div>')
-    return f'<div class="daily">{_DAILY_FILTER}{"".join(out)}</div>{_DAILY_FILTER_JS}'
+        by_sec[r.get("section") or "Uncategorized"].append(r)
+    counts = Counter({s: len(v) for s, v in by_sec.items()})
+
+    side = (
+        '<div class="dm-panel dm-filter">'
+        '<h4>Filter by date</h4>'
+        '<label>From<input type="date" id="dm-from"></label>'
+        '<label>To<input type="date" id="dm-to"></label>'
+        '<label>Search<input type="text" id="dm-q" placeholder="title, publisher, theme…">'
+        '</label></div>'
+        '<div class="dm-panel"><h4>Sections</h4><ul class="dm-secs" id="dm-secs">'
+        '<li class="on" data-sec="__all">All sections<span class="c">'
+        f'{len(rows)}</span></li>'
+        + "".join(
+            f'<li data-sec="{_e(s)}">{_e(s)}<span class="c">{n}</span></li>'
+            for s, n in counts.most_common())
+        + "</ul></div>")
+
+    def _card(r: dict) -> str:
+        sent = (r.get("sentiment") or "NEU").upper()
+        dot = {"POS": "dm-pos", "NEG": "dm-neg"}.get(sent, "dm-neu")
+        badge = '<span class="dm-badge">Priority</span>' if r.get("priority") else ""
+        reach = r.get("reach") or 0
+        reach_s = (f" · reach {reach/1_000_000:.1f}M" if reach >= 1_000_000
+                   else f" · reach {reach/1000:.0f}K" if reach >= 1000 else "")
+        tags = "".join(f'<span class="dm-tag">{_e(x)}</span>' for x in
+                       [r.get("theme"), r.get("emotions"), r.get("signals")] if x)
+        search = _e(" ".join(str(r.get(k, "")) for k in
+                    ("title", "publisher", "theme", "emotions", "signals", "author")).lower())
+        meta = " · ".join(x for x in [_e(r.get("publisher", "")) or "—",
+                          _e(r.get("date", "")), _e(r.get("time", ""))] if x)
+        return (
+            f'<article class="dm-art" draggable="true" data-id="{_e(r.get("id",""))}" '
+            f'data-date="{_e(r.get("date",""))}" data-text="{search}">'
+            f'<span class="dm-handle" title="drag to move section">&#8942;&#8942;</span>'
+            f'<span class="dm-dot {dot}"></span>'
+            f'<div style="flex:1"><div class="dm-title">{_e(r.get("title",""))}{badge}</div>'
+            f'<div class="dm-meta">{meta}{reach_s}</div>'
+            f'<div class="dm-snip">{_e(r.get("snippet",""))}</div>'
+            f'<div class="dm-tags">{tags}</div></div></article>')
+
+    sections = ""
+    for sec, n in counts.most_common():
+        cards = "".join(_card(r) for r in by_sec[sec])
+        sections += (
+            f'<section class="dm-sec" data-sec="{_e(sec)}">'
+            f'<div class="dm-sec-head"><span class="dm-handle">&#8942;&#8942;</span>{_e(sec)}'
+            f'<span class="c" data-count>{n}</span></div>'
+            f'<div class="dm-drop" data-sec="{_e(sec)}">{cards}</div></section>')
+
+    cfg = _json.dumps({"session_id": (chat or {}).get("session_id", ""),
+                       "token": (chat or {}).get("token", ""),
+                       "api_base": (chat or {}).get("api_base", "")})
+    return (
+        _DAILY_CSS
+        + f'<div class="dm-wrap"><aside class="dm-side">{side}</aside>'
+        + f'<main class="dm-main" id="dm-main">{sections}</main></div>'
+        + f"<script>{_DAILY_JS}\n__dailyInit({cfg});</script>")
 
 
-_DAILY_FILTER = (
-    '<div class="card" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">'
-    '<label style="font-size:12px;">From date<br><input type="date" id="dm-from" '
-    'style="padding:6px;border:1px solid var(--line);border-radius:8px;"></label>'
-    '<label style="font-size:12px;">To date<br><input type="date" id="dm-to" '
-    'style="padding:6px;border:1px solid var(--line);border-radius:8px;"></label>'
-    '<label style="font-size:12px;flex:1;min-width:180px;">Search (title, publisher, theme, '
-    'time…)<br><input type="text" id="dm-q" placeholder="type to filter…" '
-    'style="width:100%;padding:6px;border:1px solid var(--line);border-radius:8px;"></label>'
-    '</div>'
-)
-
-_DAILY_FILTER_JS = """<script>
-(function(){
-  var f=document.getElementById('dm-from'),t=document.getElementById('dm-to'),
-      q=document.getElementById('dm-q');
-  if(!f||!t||!q)return;
-  function apply(){
-    var from=f.value,to=t.value,s=(q.value||'').toLowerCase();
-    document.querySelectorAll('.daily-day').forEach(function(day){
+_DAILY_JS = r"""
+function __dailyInit(CFG){
+  var API=(CFG.api_base||window.location.origin).replace(/\/$/,'');
+  var main=document.getElementById('dm-main'), secs=document.getElementById('dm-secs');
+  var dragEl=null;
+  // section sidebar filter
+  secs.addEventListener('click',function(e){
+    var li=e.target.closest('li'); if(!li)return;
+    secs.querySelectorAll('li').forEach(function(x){x.classList.remove('on');});
+    li.classList.add('on'); var sec=li.getAttribute('data-sec');
+    main.querySelectorAll('.dm-sec').forEach(function(s){
+      s.style.display=(sec==='__all'||s.getAttribute('data-sec')===sec)?'':'none';});
+  });
+  // date + text filter
+  function flt(){
+    var f=(document.getElementById('dm-from')||{}).value||'';
+    var t=(document.getElementById('dm-to')||{}).value||'';
+    var q=((document.getElementById('dm-q')||{}).value||'').toLowerCase();
+    main.querySelectorAll('.dm-sec').forEach(function(s){
       var vis=0;
-      day.querySelectorAll('.daily-row').forEach(function(row){
-        var d=row.getAttribute('data-date')||'',txt=row.getAttribute('data-text')||'',ok=true;
-        if(from&&(d<from||d==='Undated'))ok=false;
-        if(to&&(d>to||d==='Undated'))ok=false;
-        if(s&&txt.indexOf(s)<0)ok=false;
-        row.style.display=ok?'':'none'; if(ok)vis++;
-      });
-      day.style.display=vis?'':'none';
+      s.querySelectorAll('.dm-art').forEach(function(a){
+        var d=a.getAttribute('data-date')||'',x=a.getAttribute('data-text')||'',ok=true;
+        if(f&&d<f)ok=false; if(t&&d>t)ok=false; if(q&&x.indexOf(q)<0)ok=false;
+        a.style.display=ok?'':'none'; if(ok)vis++;});
     });
   }
-  [f,t,q].forEach(function(el){el.addEventListener('input',apply);});
-})();
-</script>"""
+  ['dm-from','dm-to','dm-q'].forEach(function(id){var el=document.getElementById(id);
+    if(el)el.addEventListener('input',flt);});
+  // drag to move between sections (persists via the review API)
+  main.addEventListener('dragstart',function(e){
+    var a=e.target.closest('.dm-art'); if(!a)return; dragEl=a; a.classList.add('drag');
+    e.dataTransfer.effectAllowed='move';});
+  main.addEventListener('dragend',function(){ if(dragEl)dragEl.classList.remove('drag'); dragEl=null;
+    main.querySelectorAll('.dm-drop.over').forEach(function(d){d.classList.remove('over');});});
+  main.addEventListener('dragover',function(e){var d=e.target.closest('.dm-drop'); if(d){e.preventDefault();
+    d.classList.add('over');}});
+  main.addEventListener('dragleave',function(e){var d=e.target.closest('.dm-drop');
+    if(d)d.classList.remove('over');});
+  main.addEventListener('drop',function(e){
+    var drop=e.target.closest('.dm-drop'); if(!drop||!dragEl)return; e.preventDefault();
+    drop.classList.remove('over');
+    var from=dragEl.closest('.dm-sec'), toSec=drop.getAttribute('data-sec');
+    if(from&&from.getAttribute('data-sec')===toSec)return;
+    drop.appendChild(dragEl);
+    recount();
+    var id=dragEl.getAttribute('data-id'), note=document.createElement('span');
+    note.className='dm-save'; note.textContent='saving…';
+    dragEl.querySelector('.dm-title').appendChild(note);
+    fetch(API+'/chat/'+CFG.session_id+'/section',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({article_id:id,section:toSec,token:CFG.token})})
+     .then(function(r){note.textContent=r.ok?'moved ✓':'save failed';
+        setTimeout(function(){note.remove();},1800);})
+     .catch(function(){note.textContent='offline';setTimeout(function(){note.remove();},1800);});
+  });
+  function recount(){
+    main.querySelectorAll('.dm-sec').forEach(function(s){
+      var n=s.querySelectorAll('.dm-art').length; var c=s.querySelector('[data-count]');
+      if(c)c.textContent=n;});
+  }
+}
+"""
 
 
 def render(schema: dict) -> str:
@@ -401,7 +500,7 @@ def render(schema: dict) -> str:
         if t["id"] == "home":
             body = _home_cards(tabs)
         elif t["id"] == "daily":
-            body = _daily_view(schema.get("daily", []))
+            body = _daily_view(schema.get("daily", []), schema.get("chat", {}))
         elif t["id"] == "insights":
             s = schema.get("summaries", {})
             body = (
