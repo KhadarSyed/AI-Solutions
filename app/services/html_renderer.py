@@ -293,17 +293,68 @@ def _daily_view(rows: list[dict]) -> str:
     out = []
     for day in sorted(by_day, reverse=True):
         items = by_day[day]
-        rows_html = "".join(
-            f'<div class="daily-row">'
-            f'<span class="sent sent-{_e((r.get("sentiment") or "NEU").lower()[:3])}"></span>'
-            f'<div class="dr-main"><div class="dr-title">{_e(r.get("title", ""))}</div>'
-            f'<div class="dr-meta">{_e(r.get("publisher", "")) or "—"} · '
-            f'{_e(r.get("section", "")) or "—"}</div></div></div>'
-            for r in items)
-        out.append(f'<div class="daily-day"><div class="daily-date">{_e(day)}'
+        rows_html = ""
+        for r in items:
+            time = _e(r.get("time", ""))
+            theme = _e(r.get("theme", ""))
+            emotions = _e(r.get("emotions", ""))
+            signals = _e(r.get("signals", ""))
+            tags = " · ".join(x for x in [theme, emotions, signals] if x)
+            search = _e(" ".join(str(r.get(k, "")) for k in
+                                 ("title", "publisher", "theme", "emotions", "signals",
+                                  "section", "time")).lower())
+            time_html = (f'<span style="margin-left:8px;font-size:11px;color:var(--muted);'
+                         f'font-weight:600;">{time}</span>' if time else "")
+            rows_html += (
+                f'<div class="daily-row" data-date="{_e(day)}" data-time="{time}" '
+                f'data-text="{search}">'
+                f'<span class="sent sent-{_e((r.get("sentiment") or "NEU").lower()[:3])}"></span>'
+                f'<div class="dr-main"><div class="dr-title">{_e(r.get("title", ""))}'
+                f'{time_html}</div>'
+                f'<div class="dr-meta">{_e(r.get("publisher", "")) or "—"} · '
+                f'{_e(r.get("section", "")) or "—"}'
+                f'{(" · " + tags) if tags else ""}</div></div></div>')
+        out.append(f'<div class="daily-day" data-date="{_e(day)}">'
+                   f'<div class="daily-date">{_e(day)}'
                    f'<span class="daily-count">{len(items)} article'
                    f'{"s" if len(items) != 1 else ""}</span></div>{rows_html}</div>')
-    return f'<div class="daily">{"".join(out)}</div>'
+    return f'<div class="daily">{_DAILY_FILTER}{"".join(out)}</div>{_DAILY_FILTER_JS}'
+
+
+_DAILY_FILTER = (
+    '<div class="card" style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">'
+    '<label style="font-size:12px;">From date<br><input type="date" id="dm-from" '
+    'style="padding:6px;border:1px solid var(--line);border-radius:8px;"></label>'
+    '<label style="font-size:12px;">To date<br><input type="date" id="dm-to" '
+    'style="padding:6px;border:1px solid var(--line);border-radius:8px;"></label>'
+    '<label style="font-size:12px;flex:1;min-width:180px;">Search (title, publisher, theme, '
+    'time…)<br><input type="text" id="dm-q" placeholder="type to filter…" '
+    'style="width:100%;padding:6px;border:1px solid var(--line);border-radius:8px;"></label>'
+    '</div>'
+)
+
+_DAILY_FILTER_JS = """<script>
+(function(){
+  var f=document.getElementById('dm-from'),t=document.getElementById('dm-to'),
+      q=document.getElementById('dm-q');
+  if(!f||!t||!q)return;
+  function apply(){
+    var from=f.value,to=t.value,s=(q.value||'').toLowerCase();
+    document.querySelectorAll('.daily-day').forEach(function(day){
+      var vis=0;
+      day.querySelectorAll('.daily-row').forEach(function(row){
+        var d=row.getAttribute('data-date')||'',txt=row.getAttribute('data-text')||'',ok=true;
+        if(from&&(d<from||d==='Undated'))ok=false;
+        if(to&&(d>to||d==='Undated'))ok=false;
+        if(s&&txt.indexOf(s)<0)ok=false;
+        row.style.display=ok?'':'none'; if(ok)vis++;
+      });
+      day.style.display=vis?'':'none';
+    });
+  }
+  [f,t,q].forEach(function(el){el.addEventListener('input',apply);});
+})();
+</script>"""
 
 
 def render(schema: dict) -> str:

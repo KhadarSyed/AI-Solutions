@@ -58,7 +58,8 @@ async def notify_agent(state: PipelineState, agent: str, phase: str, message: st
 
 
 async def _deliver(state: PipelineState, event: str, message: str,
-                   attachments: list[tuple[str, bytes, str]], subject: str) -> None:
+                   attachments: list[tuple[str, bytes, str]], subject: str,
+                   html: str = "") -> None:
     channel = state.get("origin_channel", "web")
     run_id = state.get("run_id")
     if run_id:
@@ -72,12 +73,13 @@ async def _deliver(state: PipelineState, event: str, message: str,
         return
     await adapter.send(
         state.get("origin_address", {}),
-        OutboundMessage(subject=subject, text=message, attachments=attachments),
+        OutboundMessage(subject=subject, text=message, html=html, attachments=attachments),
     )
 
 
 async def notify_gate(state: PipelineState, *, gate: int, csv_key: str, message: str,
-                      csv_sha: str = "") -> None:
+                      csv_sha: str = "", html: str = "",
+                      extra_attachments: list[tuple[str, bytes, str]] | None = None) -> None:
     # dedupe: LangGraph re-executes an interrupted node on resume
     run_id = state.get("run_id")
     if run_id and csv_sha:
@@ -105,9 +107,10 @@ async def notify_gate(state: PipelineState, *, gate: int, csv_key: str, message:
             attachments = [(csv_key.rsplit("/", 1)[-1], data, "text/csv")]
         except Exception as exc:
             log.info("notifier.csv_load_failed", error=str(exc)[:120])
+        attachments += extra_attachments or []
 
     await _deliver(state, "notification_sent", message, attachments,
-                   subject=_task_subject(state))
+                   subject=_task_subject(state), html=html)
 
 
 async def notify_progress(state: PipelineState, message: str) -> None:
@@ -151,6 +154,19 @@ async def notify_complete(state: PipelineState) -> None:
         "Reply to this thread with any questions and I'll answer them from the "
         "analyzed coverage."
     )
+    # Final staged update (deterministic counts) — styled body for email origins.
+    html_body = ""
+    with contextlib.suppress(Exception):
+        from app.analytics import stage_stats
+        from app.channels import stage_report
+
+        fstats = stage_stats.final_stats(
+            approved_count=state.get("approved_count", 0),
+            monitoring_count=state.get("monitoring_count", state.get("approved_count", 0)))
+        tid = state.get("task_id") or (state.get("origin_address") or {}).get("task_id") or ""
+        html_body = stage_report.final_html(tid, brand, 3, fstats,
+                                            state.get("dashboard_url", ""))
+
     attachments: list[tuple[str, bytes, str]] = []
     if channel != "web":
         from app.artifacts import keys
@@ -183,4 +199,4 @@ async def notify_complete(state: PipelineState) -> None:
                                 "application/vnd.openxmlformats-officedocument."
                                 "wordprocessingml.document"))
     await _deliver(state, "result_delivered", message, attachments,
-                   subject=_task_subject(state))
+                   subject=_task_subject(state), html=html_body)

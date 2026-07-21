@@ -81,7 +81,9 @@ def test_renderer_emits_self_contained_html():
     html = render(_schema())
     assert html.startswith("<!DOCTYPE html>")
     assert "<title>Trane — Media Intelligence</title>" in html
-    assert 'class="tab on" data-t="overview"' in html
+    # Home is the default active tab in the multi-view; the overview tab still renders
+    assert 'data-t="overview"' in html
+    assert 'class="tab on" data-t="home"' in html
     assert "echarts.init" in html and "var " not in html[:200]
     assert "<video autoplay muted loop" in html
     assert 'class="logo mono"' in html
@@ -95,7 +97,7 @@ def test_renderer_emits_self_contained_html():
 def test_light_theme_variant():
     schema = _schema() | {"theme": "light"}
     html = render(schema)
-    assert "--bg:#F4F5F7" in html
+    assert "--bg:#fbfbfd" in html
 
 
 def test_template_layout_extraction():

@@ -27,6 +27,7 @@ class PipelineState(TypedDict, total=False):
     enriched_count: int
     tagged_count: int
     approved_count: int
+    monitoring_count: int         # rows kept for monitoring (feed the final dashboard)
 
     # gate outcomes ("approved" | "changes" | None while waiting)
     gate1_decision: str | None

@@ -32,6 +32,8 @@ class EmailAdapter(ChannelAdapter):
             msg["In-Reply-To"] = address["in_reply_to"]
             msg["References"] = address["in_reply_to"]
         msg.set_content(message.text)
+        if message.html:
+            msg.add_alternative(message.html, subtype="html")
         for name, data, mime in message.attachments:
             maintype, _, subtype = mime.partition("/")
             msg.add_attachment(data, maintype=maintype or "application",

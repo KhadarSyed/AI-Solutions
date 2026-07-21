@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 class OutboundMessage:
     text: str
     subject: str = ""
+    html: str = ""                     # rich body; email sends it as the HTML alternative
     attachments: list[tuple[str, bytes, str]] = field(default_factory=list)  # name, data, mime
 
 

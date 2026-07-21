@@ -200,22 +200,28 @@ def _monitoring_off(value: str) -> bool:
     return str(value).strip().lower() in {"false", "0", "no", "off", "n", ""}
 
 
+def monitoring_drop_ids(csv_bytes: bytes) -> set[str]:
+    """Parse an edited tagged CSV → the set of article ids the user set to Monitoring=FALSE.
+    Pure (no I/O) so the opt-out logic is testable without a database."""
+    import csv as _csv
+    import io
+
+    reader = _csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig", errors="replace")))
+    drop: set[str] = set()
+    if reader.fieldnames and "Monitoring" in reader.fieldnames:
+        for r in reader:
+            aid = (r.get("id") or "").strip()
+            if aid and _monitoring_off(r.get("Monitoring", "")):
+                drop.add(aid)
+    return drop
+
+
 async def apply_monitoring_csv(*, project_id: str, session_id: str, csv_bytes: bytes) -> dict:
     """Opt-out round-trip: the user's edited tagged CSV can only turn Monitoring OFF.
     Any row whose `Monitoring` column reads false/0/no/off is dropped from the monitoring
     set (is_approved_for_monitoring=False); every other row keeps its (approved) flag.
     Only monitoring-TRUE rows reach the final dashboard. Returns {kept, dropped}."""
-    import csv as _csv
-    import io
-
-    reader = _csv.DictReader(io.StringIO(csv_bytes.decode("utf-8-sig", errors="replace")))
-    drop_ids: set[str] = set()
-    if reader.fieldnames and "Monitoring" in reader.fieldnames:
-        for r in reader:
-            aid = (r.get("id") or "").strip()
-            if aid and _monitoring_off(r.get("Monitoring", "")):
-                drop_ids.add(aid)
-
+    drop_ids = monitoring_drop_ids(csv_bytes)
     counts = {"kept": 0, "dropped": 0}
 
     def mutate(payload: dict) -> list[dict]:

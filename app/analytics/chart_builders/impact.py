@@ -7,14 +7,27 @@ from app.analytics.scoring import gauge_rating, pr_impact
 
 
 def _attribute(a: dict, brand: str, competitors: list[str]) -> str | None:
-    """Attribute an article to the brand or a specific competitor. Prefers the
-    subject_brand stamped at collection (query group); falls back to a mention
-    match so articles collected before attribution still count."""
+    """Attribute an article to the brand or a specific competitor (single, primary
+    attribution — SOV shares sum to the coverage total). Ladder: subject_brand stamped
+    at collection → the tagger's extracted entities (authoritative) → a title/content
+    mention match, so articles collected before attribution still count."""
     subject = (a.get("subject_brand") or "").strip()
     if subject == brand:
         return brand
     if subject in competitors:
         return subject
+
+    ents = a.get("entities") or {}
+    brand_ents = {e.strip().lower() for e in ents.get("brand_of_interest", []) if e}
+    comp_ents = {e.strip().lower()
+                 for e in (ents.get("competitors", []) + ents.get("other_competitors", []))
+                 if e}
+    if brand.lower() in brand_ents:
+        return brand
+    for c in competitors:
+        if c.lower() in comp_ents:
+            return c
+
     text = (a.get("title", "") + " " + a.get("content", "")).lower()
     if brand.lower() in text:
         return brand

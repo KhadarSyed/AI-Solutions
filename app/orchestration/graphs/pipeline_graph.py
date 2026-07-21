@@ -51,10 +51,13 @@ async def collect(state: PipelineState) -> dict:
 
     session_id = state["session_id"]
     brand = state.get("brand", "the brand")
-    await _agent(state, "WebSearch", "started",
-                 f"Collecting {brand} + competitor coverage from all sources.")
-    await _progress(state, f"🔍 Searching news sources for {brand} (last 48 hours)…")
     config = await _session_config(session_id)
+    competitors = config.get("competitors", state.get("competitors", []))
+    comp_txt = f" Competitors: {', '.join(competitors)}." if competitors else ""
+    await _agent(state, "WebSearch", "started",
+                 f"Stage 1/3 — collecting {brand} + competitor + industry coverage from all "
+                 f"sources.{comp_txt}")
+    await _progress(state, f"🔍 Searching news sources for {brand} (last 48 hours)…")
     stats = await ingestion_service.collect(
         session_id=session_id,
         brand=config.get("brand", state.get("brand", "")),
@@ -98,15 +101,74 @@ async def _export_gate_csv(session_id: str, gate: int) -> tuple[str, str]:
 
 
 async def _notify_gate(state: PipelineState, gate: int, csv_key: str, csv_sha: str,
-                       message: str) -> None:
-    """Send the gate CSV to the run's origin channel (adapters land in Phase D;
-    web-origin runs observe the awaiting_human event on /ws/runs)."""
+                       message: str, html: str = "",
+                       extra_attachments: list | None = None) -> None:
+    """Send the gate CSV + styled staged update to the run's origin channel (adapters land
+    in Phase D; web-origin runs observe the awaiting_human event on /ws/runs)."""
     try:
         from app.channels.notifier import notify_gate
 
-        await notify_gate(state, gate=gate, csv_key=csv_key, csv_sha=csv_sha, message=message)
+        await notify_gate(state, gate=gate, csv_key=csv_key, csv_sha=csv_sha,
+                          message=message, html=html, extra_attachments=extra_attachments)
     except Exception as exc:
         log.info("gate.notify_skipped", gate=gate, reason=str(exc)[:120])
+
+
+def _with_ref(html_body: str, token: str) -> str:
+    """Embed the reply reference in the styled body so it survives quoted replies."""
+    if not html_body or not token:
+        return html_body
+    footer = (f'<div style="max-width:660px;margin:8px auto 0;color:#6b6b70;font-size:11px;'
+              f'font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;">'
+              f"Reference (keep in your reply): {token}</div>")
+    return html_body + footer
+
+
+async def _stage_pack(state: PipelineState, gate: int) -> tuple[str, list]:
+    """Build the CSS-styled staged HTML body + an ECharts snapshot attachment for a gate.
+    Every number is computed deterministically by stage_stats. Best-effort — returns
+    ('', []) on any failure so a gate never blocks on presentation."""
+    import contextlib
+
+    html_body, attachments = "", []
+    with contextlib.suppress(Exception):
+        from app.analytics import stage_stats
+        from app.channels import stage_report
+
+        session_id = state["session_id"]
+        config = await _session_config(session_id)
+        brand = config.get("brand", state.get("brand", "Brand"))
+        competitors = config.get("competitors", [])
+        tid = state.get("task_id") or (state.get("origin_address") or {}).get("task_id") or ""
+        store = get_artifact_store()
+
+        if gate == 1:
+            articles = (await store.get_json(keys.source_file(session_id))).get("articles", [])
+            stats = stage_stats.collection_stats(articles, brand=brand, competitors=competitors)
+            html_body = stage_report.collection_html(tid, brand, 3, stats)
+            snap = stage_report.echarts_snapshot(f"{brand} — Collection", [
+                {"id": "grp", "title": "Coverage by group", "type": "bar",
+                 "categories": [k for k, _ in stats["group_series"]],
+                 "values": [v for _, v in stats["group_series"]]},
+                {"id": "subj", "title": "By brand & competitor", "type": "bar",
+                 "categories": [k for k, _ in stats["subject_series"]],
+                 "values": [v for _, v in stats["subject_series"]]},
+            ])
+            attachments = [("stage1_summary.html", snap, "text/html")]
+        else:
+            articles = (await store.get_json(keys.tagged_file(session_id))).get("articles", [])
+            stats = stage_stats.tagging_stats(articles)
+            html_body = stage_report.tagging_html(tid, brand, 3, stats)
+            snap = stage_report.echarts_snapshot(f"{brand} — Tagging", [
+                {"id": "vol", "title": "Volume over time", "type": "line",
+                 "categories": [d for d, _ in stats["volume_series"]],
+                 "values": [v for _, v in stats["volume_series"]]},
+                {"id": "thm", "title": "Top themes", "type": "bar",
+                 "categories": [t for t, _ in stats["top_themes"]],
+                 "values": [v for _, v in stats["top_themes"]]},
+            ])
+            attachments = [("stage2_summary.html", snap, "text/html")]
+    return html_body, attachments
 
 
 async def gate1_consent(state: PipelineState) -> dict:
@@ -118,7 +180,10 @@ async def gate1_consent(state: PipelineState) -> dict:
     message = ("Collected articles are ready (CSV attached). "
                "Reply APPROVE to start enrichment & tagging, or CHANGES with instructions. "
                f"Please keep this reference in your reply: {token}")
-    await _notify_gate(state, 1, csv_key, csv_sha, message)
+    html_body, extra = await _stage_pack(state, 1)
+    html_body = _with_ref(html_body, token)
+    await _notify_gate(state, 1, csv_key, csv_sha, message, html=html_body,
+                       extra_attachments=extra)
     decision = interrupt({
         "gate": 1, "kind": "consent_to_enrich", "csv_key": csv_key,
         "channel": state.get("origin_channel"), "message": message,
@@ -131,8 +196,9 @@ async def tag(state: PipelineState) -> dict:
     from app.services.tagging_service import tag_session
 
     await _agent(state, "Tagging", "started",
-                 "Approved — enriching reach and tagging sentiment, theme, section "
-                 "and entities. WebSearch Agent is free for your next request.")
+                 f"Stage 2/3 — approved. Tagging {state.get('unique_count', 0)} articles: "
+                 "sentiment (+confidence & reason), theme tiers, emotions, signals, entities "
+                 "and section. WebSearch Agent is free for your next request.")
     await _progress(state, "🏷️ Tagging articles (sentiment, theme, section, entities)…")
     stats = await tag_session(session_id=state["session_id"], project_id=state["project_id"])
     return {
@@ -149,10 +215,13 @@ async def gate2_approval(state: PipelineState) -> dict:
     csv_key, csv_sha = await _export_gate_csv(session_id, 2)
     token = resume_token(state.get("run_id", ""))
     message = ("Tagged articles are ready for your approval (CSV attached). "
-               "Reply APPROVE to build dashboards, or CHANGES with instructions. "
-               "Detailed edits are available in the review console. "
+               "Reply APPROVE to build dashboards, or reply with an edited CSV to set "
+               "Monitoring=FALSE on rows to exclude. "
                f"Please keep this reference in your reply: {token}")
-    await _notify_gate(state, 2, csv_key, csv_sha, message)
+    html_body, extra = await _stage_pack(state, 2)
+    html_body = _with_ref(html_body, token)
+    await _notify_gate(state, 2, csv_key, csv_sha, message, html=html_body,
+                       extra_attachments=extra)
     decision = interrupt({
         "gate": 2, "kind": "approve_tagged", "csv_key": csv_key,
         "channel": state.get("origin_channel"), "message": message,
@@ -219,6 +288,7 @@ async def dashboards(state: PipelineState) -> dict:
 
     return {
         "approved_count": payload["approved_count"],
+        "monitoring_count": payload["monitoring_count"],
         "charts_data_file_key": keys.charts_data_file(state["session_id"]),
         "notes": {"dashboards": {"approved": payload["approved_count"],
                                  "monitoring": payload["monitoring_count"],

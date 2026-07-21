@@ -57,9 +57,10 @@ def test_measurement_kpis():
 def test_impact_share_of_voice_and_matrix():
     board = impact.build(ARTICLES, "Trane", ["Carrier", "Daikin"])
     sov = board["share_of_voice"]
+    # single primary attribution via the tagger's entities: A0 + A2 → Trane, A1 → Carrier
     assert sov["brand_mentions"] == 2
     carrier = next(c for c in sov["competitors"] if c["name"] == "Carrier")
-    assert carrier["mentions"] == 2
+    assert carrier["mentions"] == 1
     matrix = {m["competitor"]: m for m in board["competitive_matrix"]}
     assert matrix["Carrier"]["NEG"] == 1
     assert "Daikin" not in matrix
