@@ -110,15 +110,18 @@ def _table(headers, rows) -> str:
 
 
 def _kpi_cards(cards) -> str:
-    """cards: [(value, label)] — a responsive row of stat cards."""
+    """cards: [(value, label)] — a responsive row of stat cards. The value font shrinks
+    for long strings (e.g. a date-range window) so it never overflows the card."""
     cells = []
     for value, label in cards:
+        n = len(str(value))
+        fs = 26 if n <= 8 else 20 if n <= 14 else 15 if n <= 24 else 13
         cells.append(
             f'<td width="{100 // max(len(cards), 1)}%" valign="top" style="padding:6px">'
             f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
             f'style="background:{_CARD};border:1px solid {_BORDER};border-radius:12px">'
             f'<tr><td style="padding:14px 14px 12px">'
-            f'<div style="font-family:{_SERIF};font-size:26px;color:{_INK};line-height:1">'
+            f'<div style="font-family:{_SERIF};font-size:{fs}px;color:{_INK};line-height:1.15">'
             f"{_esc(value)}</div>"
             f'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.06em;'
             f'color:{_MUTED};margin-top:6px">{_esc(label)}</div>'
@@ -243,18 +246,27 @@ def collection_kpi_html(task_id, brand, stats, *, tagging_sources, enrichment_po
                   preheader=f"{stats['total']} articles collected for {brand} — approve to tag.")
 
 
-def tagged_results_html(task_id, brand, stats, breakdown, *, dropped=0,
+def tagged_results_html(task_id, brand, stats, breakdown, *, collected=0, dropped=0,
                         memory_updates=None) -> str:
     memory_updates = memory_updates or []
+    tagged = stats["tagged"]
+    collected = collected or (tagged + dropped)
     sov = breakdown["sov_series"]
     sent = breakdown["sentiment_series"]
     sent_rows = [[n, s["POS"], s["NEU"], s["NEG"]] for n, s in sent]
     mem_txt = ("Applied your requests: " + ", ".join(memory_updates)
                if memory_updates else "No new tagging rules requested.")
+    funnel = _card(
+        "From collection to tagged",
+        f'<div style="font-size:13.5px;color:{_INK};line-height:1.7">'
+        f'<b>{collected}</b> articles collected &rarr; <b>{tagged}</b> tagged and '
+        f'classified &rarr; <b>{dropped}</b> dropped (duplicates / off-topic / failed to '
+        f'tag). {stats["enriched"]} enriched with author &amp; country.</div>')
     body = (
-        _kpi_cards([(str(stats["tagged"]), "Tagged"),
-                    (str(dropped), "Dropped"),
-                    (str(stats["enriched"]), "Enriched")])
+        _kpi_cards([(str(collected), "Collected"),
+                    (str(tagged), "Tagged"),
+                    (str(dropped), "Dropped")])
+        + funnel
         + _card("Top 5 themes", _bars(stats["top_themes"]))
         + _card("Top 5 signals", _bars(stats["top_signals"]))
         + _card("Share of voice (by brand)", _bars(sov))

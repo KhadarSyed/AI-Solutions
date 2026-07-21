@@ -118,12 +118,18 @@ async def plan_gate(state: PipelineState) -> dict:
     brand = config.get("brand", state.get("brand", "Brand"))
     competitors = config.get("competitors", state.get("competitors", []))
     query_groups = config.get("query_groups", state.get("query_groups", []))
+    import contextlib
+
     from app.config.settings import get_settings
     days_back = config.get("days_back", get_settings().collection_days_back)
     label, _ = _duration(days_back)
 
-    brands_logos = ([(brand, None, _brand_color(brand))]
-                    + [(c, None, _brand_color(c)) for c in competitors])
+    logos: dict = {}
+    with contextlib.suppress(Exception):
+        from app.tools.enrichment.logos import logo_urls
+
+        logos = await logo_urls(state["project_id"], [brand, *competitors])
+    brands_logos = [(b, logos.get(b), _brand_color(b)) for b in [brand, *competitors]]
     intent = (f"Monitor {brand} and {len(competitors)} competitor(s) across news and social "
               f"for {label}. Classify each article for sentiment (with confidence and a "
               "reason), theme tiers, emotions, signals and entities, then deliver an "
@@ -133,7 +139,6 @@ async def plan_gate(state: PipelineState) -> dict:
     queries = [q for g in query_groups for q in g.get("queries", [])]
     token = resume_token(state.get("run_id", ""))
 
-    import contextlib
     with contextlib.suppress(Exception):
         html = stage_report.plan_html(
             _tid(state), brand, {}, brands_logos=brands_logos, duration=label,
@@ -345,8 +350,10 @@ async def tagged_gate(state: PipelineState) -> dict:
             keys.tagged_file(session_id))).get("articles", [])
         stats = stage_stats.tagging_stats(articles)
         breakdown = stage_stats.brand_breakdown(articles, brand=brand, competitors=competitors)
+        collected = state.get("unique_count") or len(articles)
+        dropped = max(0, collected - stats["tagged"])   # collected but not tagged
         html_body = stage_report.tagged_results_html(
-            _tid(state), brand, stats, breakdown, dropped=0,
+            _tid(state), brand, stats, breakdown, collected=collected, dropped=dropped,
             memory_updates=config.get("tagging_additions", [])) + _ref_footer(token)
         snap = stage_report.echarts_snapshot(f"{brand} — Tagging", [
             {"id": "thm", "title": "Top themes", "type": "bar",

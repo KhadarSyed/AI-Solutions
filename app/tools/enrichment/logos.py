@@ -127,6 +127,35 @@ async def _fetch_logo(domain: str) -> str | None:
         return None
 
 
+async def _domain_for(project_id: str, name: str) -> str | None:
+    """Resolve a brand's domain: learned research memory → DDG official-site lookup."""
+    with contextlib.suppress(Exception):
+        hits = await recall(agent="dashboard", query=f"logo domain for {name}",
+                            project_id=project_id, memory_type=MemoryType.RESEARCH, limit=2)
+        for h in hits:
+            m = re.search(rf"{re.escape(name)}\s*→\s*logo domain\s+(\S+)",
+                          str(h.get("memory", "")))
+            if m:
+                return m.group(1)
+    return await _find_domain(name)
+
+
+async def logo_urls(project_id: str, names: list[str], budget: int = 6) -> dict[str, str]:
+    """Email-safe REMOTE logo URLs per brand (base64 is stripped by mail clients, but a
+    remote <img src> loads). Uses the resolved domain + Google's favicon service, which
+    reliably returns the brand's own icon. Names without a domain are omitted (caller
+    falls back to a monogram chip)."""
+    out: dict[str, str] = {}
+    for name in names[:budget]:
+        domain = await _domain_for(project_id, name)
+        if domain:
+            out[name] = f"https://www.google.com/s2/favicons?domain={domain}&sz=128"
+            with contextlib.suppress(Exception):
+                await remember(agent="dashboard", memory_type=MemoryType.RESEARCH,
+                               project_id=project_id, content=f"{name} → logo domain {domain}")
+    return out
+
+
 async def resolve_logos(project_id: str, names: list[str], budget: int = 6) -> list[dict]:
     out: list[dict] = []
     for i, name in enumerate(names[:budget]):
