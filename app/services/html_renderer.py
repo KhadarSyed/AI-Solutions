@@ -164,6 +164,11 @@ body{font-family:var(--font-body);font-size:14px;line-height:1.55;letter-spacing
 .chat-msg .ts{display:block;font-size:10px;opacity:.55;margin-top:5px}
 .chat-msg table{border-collapse:collapse;width:100%;margin:6px 0;font-size:12px}
 .chat-msg th,.chat-msg td{border:1px solid var(--line);padding:4px 7px;text-align:left}
+.chat-msg th{background:var(--card2);font-weight:600}
+.chat-msg h4,.chat-msg h5{margin:8px 0 4px;font-family:var(--font-display)}
+.chat-msg ul,.chat-msg ol{margin:4px 0;padding-left:18px}
+.chat-msg code{background:var(--card2);padding:1px 5px;border-radius:5px;font-size:12px}
+.chat-echarts{width:100%;height:240px;margin:8px 0}
 .chat-input{display:flex;gap:8px;padding:12px;border-top:1px solid var(--line)}
 .chat-input input{flex:1;border:1px solid var(--line);border-radius:12px;padding:10px 12px;
   background:var(--bg);color:var(--ink);font-family:var(--font-body);font-size:13.5px}
@@ -456,6 +461,73 @@ function __dailyInit(CFG){
 """
 
 
+_CHAT_JS = r"""
+const CHAT=__CHAT_JSON__;
+const CHAT_API=(CHAT.api_base||window.location.origin).replace(/\/$/,'');
+function chatToggle(){document.getElementById('chatPanel').classList.toggle('open');}
+function chatEsc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function chatTime(ts){
+  var d=new Date(ts), diff=(Date.now()-d.getTime())/1000; if(diff<0)diff=0;
+  if(diff<86400){
+    if(diff<60)return Math.floor(diff)+'s ago';
+    if(diff<3600)return Math.floor(diff/60)+'m ago';
+    return Math.floor(diff/3600)+'h ago';
+  }
+  return d.toLocaleString();
+}
+function chatMd(src){
+  src=(src||''); var charts=[];
+  src=src.replace(/```echarts\s*([\s\S]*?)```/g,function(_,j){var i=charts.length;charts.push(j.trim());return 'C'+i+'';});
+  var s=chatEsc(src);
+  // markdown tables
+  s=s.replace(/(?:^|\n)((?:[ \t]*\|.*\|[ \t]*(?:\n|$))+)/g,function(m,block){
+    var rows=block.trim().split('\n').filter(function(r){return r.indexOf('|')>=0 && !/^[\s|:-]+$/.test(r);});
+    if(rows.length<1)return m;
+    var html='<table>';
+    rows.forEach(function(r,idx){
+      var cells=r.replace(/^[ \t]*\|/,'').replace(/\|[ \t]*$/,'').split('|').map(function(c){return c.trim();});
+      var tag=idx===0?'th':'td';
+      html+='<tr>'+cells.map(function(c){return '<'+tag+'>'+c+'</'+tag+'>';}).join('')+'</tr>';
+    });
+    return '\n'+html+'</table>\n';
+  });
+  s=s.replace(/^\s*###\s+(.*)$/gm,'<h5>$1</h5>').replace(/^\s*##\s+(.*)$/gm,'<h4>$1</h4>').replace(/^\s*#\s+(.*)$/gm,'<h4>$1</h4>');
+  s=s.replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>').replace(/`([^`]+)`/g,'<code>$1</code>');
+  s=s.replace(/(?:^|\n)((?:[ \t]*[-*]\s+.*(?:\n|$))+)/g,function(m,b){
+    var items=b.trim().split('\n').map(function(l){return l.replace(/^[ \t]*[-*]\s+/,'');});
+    return '\n<ul>'+items.map(function(i){return '<li>'+i+'</li>';}).join('')+'</ul>\n';});
+  s=s.replace(/(?:^|\n)((?:[ \t]*\d+\.\s+.*(?:\n|$))+)/g,function(m,b){
+    var items=b.trim().split('\n').map(function(l){return l.replace(/^[ \t]*\d+\.\s+/,'');});
+    return '\n<ol>'+items.map(function(i){return '<li>'+i+'</li>';}).join('')+'</ol>\n';});
+  s=s.replace(/\n/g,'<br>').replace(/(<br>\s*){2,}/g,'<br>');
+  charts.forEach(function(j,i){s=s.replace('C'+i+'','<div class="chat-echarts" data-opt="'+chatEsc(j).replace(/"/g,'&quot;')+'"></div>');});
+  return s;
+}
+function chatInitCharts(el){
+  if(!window.echarts)return;
+  el.querySelectorAll('.chat-echarts').forEach(function(d){
+    try{var raw=d.getAttribute('data-opt').replace(/&quot;/g,'"').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+      var opt=JSON.parse(raw); d.style.height='240px'; var ch=echarts.init(d);
+      opt.backgroundColor='transparent'; ch.setOption(opt);
+      window.addEventListener('resize',function(){ch.resize();});}catch(e){}
+  });
+}
+function chatSend(){
+  var inp=document.getElementById('chatIn'),log=document.getElementById('chatLog');
+  var q=(inp.value||'').trim(); if(!q)return; inp.value='';
+  log.insertAdjacentHTML('beforeend','<div class="chat-msg user">'+chatEsc(q)+'</div>');
+  var t=document.createElement('div'); t.className='chat-msg bot'; t.textContent='…'; log.appendChild(t); log.scrollTop=log.scrollHeight;
+  fetch(CHAT_API+'/chat/'+CHAT.session_id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,token:CHAT.token})})
+   .then(r=>r.json().then(d=>({ok:r.ok,d})))
+   .then(o=>{ if(!o.ok){t.textContent=(o.d&&o.d.detail)||'That request failed.';}
+     else { t.innerHTML=chatMd(o.d.answer)+'<span class="ts">'+chatTime(o.d.timestamp)+'</span>'; chatInitCharts(t); }
+     log.scrollTop=log.scrollHeight; })
+   .catch(()=>{t.textContent='Network error — is the agent reachable?';});
+}
+document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('chatIn'); if(i)i.addEventListener('keydown',function(e){if(e.key==='Enter')chatSend();});});
+"""
+
+
 def render(schema: dict) -> str:
     settings = get_settings()
     embed = settings.dashboard_asset_mode == "embed"
@@ -565,33 +637,20 @@ for (const [id, spec] of Object.entries(DATA.geo)) {{
     chat_widget = ""
     if chat.get("session_id") and chat.get("token"):
         chat_json = json.dumps(chat).replace("<", "\\u003c")
-        chat_widget = f"""
-<button class="chat-fab" onclick="chatToggle()">💬 Ask the data agent</button>
-<div class="chat-panel" id="chatPanel">
-  <div class="chat-head">Ask the data agent<button class="chat-close" onclick="chatToggle()" aria-label="close">×</button></div>
-  <div class="chat-log" id="chatLog"><div class="chat-msg bot">Ask anything about this coverage — I answer from the analyzed articles.</div></div>
-  <div class="chat-input"><input id="chatIn" placeholder="e.g. top negative story this week?" autocomplete="off"><button onclick="chatSend()">Send</button></div>
-  <div class="chat-note">Grounded in this report · available for {chat.get('window_days', 3)} days</div>
-</div>
-<script>
-const CHAT={chat_json};
-// empty api_base → same-origin (dashboard served from the API), else the configured public base
-const CHAT_API=(CHAT.api_base||window.location.origin).replace(/\\/$/,'');
-function chatToggle(){{document.getElementById('chatPanel').classList.toggle('open');}}
-function chatEsc(s){{return (s||'').replace(/[&<>]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;'}}[c]));}}
-function chatSend(){{
-  const inp=document.getElementById('chatIn'),log=document.getElementById('chatLog');
-  const q=(inp.value||'').trim(); if(!q)return; inp.value='';
-  log.insertAdjacentHTML('beforeend','<div class="chat-msg user">'+chatEsc(q)+'</div>');
-  const t=document.createElement('div'); t.className='chat-msg bot'; t.textContent='…'; log.appendChild(t); log.scrollTop=log.scrollHeight;
-  fetch(CHAT_API+'/chat/'+CHAT.session_id,{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{question:q,token:CHAT.token}})}})
-   .then(r=>r.json().then(d=>({{ok:r.ok,d}})))
-   .then(o=>{{ if(!o.ok){{t.textContent=(o.d&&o.d.detail)||'That request failed.';}} else {{ t.innerHTML=chatEsc(o.d.answer).replace(/\\n/g,'<br>')+'<span class="ts">'+new Date(o.d.timestamp).toLocaleString()+'</span>'; }} log.scrollTop=log.scrollHeight; }})
-   .catch(()=>{{t.textContent='Network error — is the agent reachable?';}});
-}}
-document.getElementById('chatIn').addEventListener('keydown',e=>{{if(e.key==='Enter')chatSend();}});
-</script>
-"""
+        window_days = chat.get("window_days", 3)
+        chat_widget = (
+            '<button class="chat-fab" onclick="chatToggle()">💬 Ask the data agent</button>'
+            '<div class="chat-panel" id="chatPanel">'
+            '<div class="chat-head">Ask the data agent<button class="chat-close" '
+            'onclick="chatToggle()" aria-label="close">×</button></div>'
+            '<div class="chat-log" id="chatLog"><div class="chat-msg bot">Ask anything about '
+            'this coverage — I answer from the analyzed articles.</div></div>'
+            '<div class="chat-input"><input id="chatIn" placeholder="e.g. top negative story '
+            'this week?" autocomplete="off"><button onclick="chatSend()">Send</button></div>'
+            f'<div class="chat-note">Grounded in this report · available for {window_days} '
+            'days</div></div>'
+            "<script>" + _CHAT_JS.replace("__CHAT_JSON__", chat_json) + "</script>"
+        )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
