@@ -1,6 +1,8 @@
 """SearXNG — self-hosted metasearch (news category), free, aggregates engines."""
 
 import asyncio
+import contextlib
+from datetime import datetime
 from urllib.parse import urlparse
 
 import httpx
@@ -16,6 +18,20 @@ from app.tools.connectors.base import (
 )
 
 log = get_logger(__name__)
+
+
+def _parse_date(value) -> datetime | None:
+    """SearXNG publishedDate → datetime. Handles ISO (with/without Z) and RFC-822."""
+    s = str(value or "").strip()
+    if not s:
+        return None
+    with contextlib.suppress(Exception):
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    with contextlib.suppress(Exception):
+        from email.utils import parsedate_to_datetime
+
+        return parsedate_to_datetime(s)
+    return None
 
 
 class SearxngConnector(Connector):
@@ -49,6 +65,7 @@ class SearxngConnector(Connector):
                             title=item.get("title", ""),
                             content=item.get("content", "") or "",
                             publisher_domain=urlparse(url).netloc.removeprefix("www."),
+                            published_at=_parse_date(item.get("publishedDate")),
                             url=url,
                             language=filters.language or "",
                             source=self.name,

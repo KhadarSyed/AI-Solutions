@@ -11,9 +11,11 @@ from app.agents.email_agent import (
     _authorized_domain,
     _extract_brand_generic,
     _parse_competitor_override,
+    _parse_window_days,
     subject_allowed,
 )
 from app.channels.teams_mcp import TeamsMcpAdapter
+from app.services.html_renderer import _fmt_date
 
 
 class TestBrandExtraction:
@@ -113,6 +115,37 @@ class TestSubjectGating:
 
     def test_unrelated_rejected(self):
         assert not subject_allowed("Lunch?", ["BeOne", "Trane", "Otsuka"])
+
+
+class TestWindowFromTrigger:
+    def test_days(self):
+        assert _parse_window_days("Monitor Trane for the last 2 days") == 2
+        assert _parse_window_days("past 10 days please") == 10
+
+    def test_week_month(self):
+        assert _parse_window_days("monitor over the last week") == 7
+        assert _parse_window_days("coverage for the past 2 weeks") == 14
+        assert _parse_window_days("last month") == 30
+
+    def test_hours_and_yesterday(self):
+        assert _parse_window_days("last 48 hours") == 2
+        assert _parse_window_days("since yesterday") == 1
+
+    def test_unspecified_is_none(self):
+        assert _parse_window_days("Monitor Pfizer") is None
+        assert _parse_window_days("") is None
+
+
+class TestDateFormatting:
+    def test_iso_date_formatted(self):
+        assert _fmt_date("2026-07-14") == "Tue, Jul 14, 2026"
+
+    def test_iso_datetime_formatted(self):
+        assert _fmt_date("2026-07-14T10:30:00") == "Tue, Jul 14, 2026"
+
+    def test_empty_is_blank(self):
+        assert _fmt_date("") == ""
+        assert _fmt_date(None) == ""
 
 
 class TestEscalationState:

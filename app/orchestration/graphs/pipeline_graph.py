@@ -63,6 +63,18 @@ async def _agent(state: PipelineState, agent: str, phase: str, message: str) -> 
         await notify_agent(state, agent, phase, message)
 
 
+def _gate(payload: dict) -> dict:
+    """Human approval point. Normally interrupt() until a channel reply resumes the run;
+    when AUTO_APPROVE_GATES is set the stage notification has already gone out, so we
+    self-approve and let the pipeline run end-to-end over the real channel."""
+    from app.config.settings import get_settings
+
+    if get_settings().auto_approve_gates:
+        log.info("gate.auto_approved", gate=payload.get("gate"))
+        return {"decision": "approved", "feedback": ""}
+    return interrupt(payload)
+
+
 def _duration(days_back: int) -> tuple[str, str]:
     """(human label, days) for the plan window."""
     days = max(1, round(days_back))
@@ -148,8 +160,8 @@ async def plan_gate(state: PipelineState) -> dict:
             f"Monitoring begins for {brand}. Review the plan and reply APPROVE to start "
             f"collecting, or 'change: …' to adjust. Reference: {token}"))
 
-    decision = interrupt({"gate": 0, "kind": "approve_plan",
-                          "channel": state.get("origin_channel"), "brand": brand})
+    decision = _gate({"gate": 0, "kind": "approve_plan",
+                      "channel": state.get("origin_channel"), "brand": brand})
     if decision.get("decision") == "approved":
         await _agent(state, "WebSearch", "started",
                      f"Plan approved — WebSearch started for {brand} + {len(competitors)} "
@@ -268,8 +280,8 @@ async def collect_gate(state: PipelineState) -> dict:
     await _notify_gate(state, 1, csv_key, csv_sha, message, html=html_body,
                        extra_attachments=extra)
 
-    decision = interrupt({"gate": 1, "kind": "approve_collection", "csv_key": csv_key,
-                          "channel": state.get("origin_channel"), "message": message})
+    decision = _gate({"gate": 1, "kind": "approve_collection", "csv_key": csv_key,
+                      "channel": state.get("origin_channel"), "message": message})
     result = {"gate1_decision": decision.get("decision"),
               "gate1_feedback": decision.get("feedback", "")}
     if decision.get("decision") == "approved":
@@ -370,8 +382,8 @@ async def tagged_gate(state: PipelineState) -> dict:
     await _notify_gate(state, 2, csv_key, csv_sha, message, html=html_body,
                        extra_attachments=extra)
 
-    decision = interrupt({"gate": 2, "kind": "approve_tagged", "csv_key": csv_key,
-                          "channel": state.get("origin_channel"), "message": message})
+    decision = _gate({"gate": 2, "kind": "approve_tagged", "csv_key": csv_key,
+                      "channel": state.get("origin_channel"), "message": message})
     result = {"gate2_decision": decision.get("decision"),
               "gate2_feedback": decision.get("feedback", "")}
     if decision.get("decision") == "approved":

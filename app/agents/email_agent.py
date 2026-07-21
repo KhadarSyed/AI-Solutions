@@ -59,6 +59,33 @@ def subject_allowed(subject: str, brands: list[str]) -> bool:
     return bool(_START_RE.search(low) and any(b.lower() in low for b in brands if b))
 
 
+_WINDOW_RE = re.compile(
+    r"\b(?:last|past|previous|recent)\s+(?:(\d+)\s*)?(days?|weeks?|months?|hours?)\b", re.I)
+
+
+def _parse_window_days(text: str) -> int | None:
+    """Collection window (days) requested in the trigger: 'last 2 days'→2, 'past week'→7,
+    'last month'→30, 'last 48 hours'→2, 'yesterday'→1. None when unspecified (the pipeline
+    then uses the configured default), so the date range always follows what the user asked."""
+    t = text or ""
+    if re.search(r"\b(yesterday|last\s*24\s*h(?:ours?)?|past\s*24\s*h(?:ours?)?)\b", t, re.I):
+        return 1
+    m = _WINDOW_RE.search(t)
+    if not m:
+        return None
+    n = int(m.group(1)) if m.group(1) else 1
+    unit = m.group(2).lower()
+    if unit.startswith("day"):
+        return max(1, n)
+    if unit.startswith("week"):
+        return max(1, n * 7)
+    if unit.startswith("month"):
+        return max(1, n * 30)
+    if unit.startswith("hour"):
+        return max(1, round(n / 24))
+    return None
+
+
 def _parse_competitor_override(text: str) -> list[str] | None:
     """Extract an explicit competitor list from the message, e.g. 'competitors: A, B'."""
     m = re.search(r"competitors?\s*[:\-]\s*(.+)", text or "", re.I)
@@ -347,13 +374,16 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
     override = _parse_competitor_override(inbound.text)   # user-named competitors win
     competitors = await resolve_competitors(brand, str(project.id), override=override)
     query_groups = build_query_plan(brand, competitors, industry)
+    # collection window follows the trigger ("last 7 days" etc.); omitted → pipeline default
+    window_days = _parse_window_days(f"{inbound.subject}\n{inbound.text}")
+    config = {"brand": brand, "query_groups": query_groups, "competitors": competitors}
+    if window_days:
+        config["days_back"] = window_days
     async with get_sessionmaker()() as db, db.begin():
         gq = GeneratedQuery(project_id=project.id, brand=brand,
                             query_groups=query_groups, competitors=competitors)
         db.add(gq)
-        row = SessionRow(project_id=project.id,
-                         config={"brand": brand, "query_groups": query_groups,
-                                 "competitors": competitors})
+        row = SessionRow(project_id=project.id, config=config)
         db.add(row)
         await db.flush()
         sid = str(row.id)

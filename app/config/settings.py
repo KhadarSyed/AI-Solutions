@@ -95,6 +95,9 @@ class Settings(BaseSettings):
     gate_escalation_enabled: bool = True
     gate_reminder_minutes: int = 30        # minutes between approval reminders
     gate_max_reminders: int = 2            # reminders after the first gate email, then drop
+    # Auto-approve every gate (each stage email STILL goes out) so a run completes end-to-end
+    # over the real channel with no human replies. For demos/tests; leave False for live use.
+    auto_approve_gates: bool = False
 
     # Self-healing
     self_heal_enabled: bool = True

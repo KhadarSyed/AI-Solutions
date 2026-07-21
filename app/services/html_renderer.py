@@ -32,6 +32,20 @@ def _safe_http_url(url: str) -> str:
 def _safe_data_image(uri: str) -> str:
     return escape(uri, quote=True) if str(uri).startswith("data:image/") else ""
 
+
+def _fmt_date(value) -> str:
+    """ISO date/datetime → 'Tue, Jul 14, 2026'. Empty/unparseable → '' (caller shows n/a)."""
+    from datetime import date
+
+    s = str(value or "").strip()
+    if not s:
+        return ""
+    try:
+        d = date.fromisoformat(s[:10])
+    except Exception:
+        return _e(s)                      # already human text — keep as-is (escaped)
+    return f"{d:%a, %b} {d.day}, {d.year}"
+
 VENDOR = Path(__file__).resolve().parents[1] / "static" / "vendor"
 
 CDN = {
@@ -326,7 +340,10 @@ _DAILY_CSS = """<style>
 .dm-handle{color:var(--muted);cursor:grab;user-select:none;font-size:15px;line-height:1.4;letter-spacing:-2px}
 .dm-dot{flex:0 0 9px;height:9px;border-radius:50%;margin-top:5px}
 .dm-pos{background:#16a34a}.dm-neu{background:#9aa2ad}.dm-neg{background:#dc2626}
-.dm-title{font-weight:600;font-size:14px;color:var(--ink);line-height:1.4}
+.dm-title-row{display:flex;align-items:baseline;flex-wrap:wrap}
+.dm-title{font-weight:600;font-size:14px;color:var(--ink);line-height:1.4;text-decoration:none}
+a.dm-title:hover{color:var(--accent);text-decoration:underline}
+a.dm-title::after{content:"\2197";font-size:11px;color:var(--muted);margin-left:5px;opacity:.7}
 .dm-badge{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;
   letter-spacing:.04em;border-radius:6px;padding:2px 7px;margin-left:8px;background:#fde7e1;color:#b5462f}
 .dm-meta{font-size:12px;color:var(--muted);margin-top:3px}
@@ -375,14 +392,22 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
                        [r.get("theme"), r.get("emotions"), r.get("signals")] if x)
         search = _e(" ".join(str(r.get(k, "")) for k in
                     ("title", "publisher", "theme", "emotions", "signals", "author")).lower())
-        meta = " · ".join(x for x in [_e(r.get("publisher", "")) or "—",
-                          _e(r.get("date", "")), _e(r.get("time", ""))] if x)
+        # date is always shown (formatted); a genuinely unknown one reads "date n/a"
+        when = _fmt_date(r.get("date", "")) or "date n/a"
+        if r.get("time"):
+            when += f" · {_e(r.get('time', ''))}"
+        meta = " · ".join([_e(r.get("publisher", "")) or "—", when])
+        title = _e(r.get("title", "")) or "(untitled)"
+        href = _safe_http_url(r.get("url", ""))
+        title_html = (f'<a class="dm-title" href="{href}" target="_blank" '
+                      f'rel="noopener noreferrer">{title}</a>' if href
+                      else f'<span class="dm-title">{title}</span>')
         return (
             f'<article class="dm-art" draggable="true" data-id="{_e(r.get("id",""))}" '
             f'data-date="{_e(r.get("date",""))}" data-text="{search}">'
             f'<span class="dm-handle" title="drag to move section">&#8942;&#8942;</span>'
             f'<span class="dm-dot {dot}"></span>'
-            f'<div style="flex:1"><div class="dm-title">{_e(r.get("title",""))}{badge}</div>'
+            f'<div style="flex:1"><div class="dm-title-row">{title_html}{badge}</div>'
             f'<div class="dm-meta">{meta}{reach_s}</div>'
             f'<div class="dm-snip">{_e(r.get("snippet",""))}</div>'
             f'<div class="dm-tags">{tags}</div></div></article>')
@@ -453,7 +478,7 @@ function __dailyInit(CFG){
     recount();
     var id=dragEl.getAttribute('data-id'), note=document.createElement('span');
     note.className='dm-save'; note.textContent='saving…';
-    dragEl.querySelector('.dm-title').appendChild(note);
+    (dragEl.querySelector('.dm-title-row')||dragEl.querySelector('.dm-title')).appendChild(note);
     fetch(API+'/chat/'+CFG.session_id+'/section',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({article_id:id,section:toSec,token:CFG.token})})
