@@ -477,9 +477,10 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
         await _thread_reply(
             inbound, adapter, subject=f"[{tid}] {intent.brand} Monitoring",
             brand=intent.brand, brands_logos=logos,
-            text=(f"Task {tid} started for {intent.brand}. The WebSearch Agent is "
-                  "collecting coverage now; I'll email the collected articles here for "
-                  f"your review shortly. Keep [{tid}] in the subject on any reply."))
+            text=(f"Task {tid} started for {intent.brand}. I'm preparing the monitoring "
+                  "plan and will email it here for your review shortly — reply APPROVE to "
+                  "begin collection. Nothing runs until you approve each stage. "
+                  f"Keep [{tid}] in the subject on any reply."))
         return {"handled": True, "action": "start_run", **result}
 
     if intent.kind == "gate_decision" and run is not None:
