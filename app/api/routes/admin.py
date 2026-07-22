@@ -15,40 +15,57 @@ router = APIRouter(tags=["admin"])
 DB = Annotated[AsyncSession, Depends(get_db)]
 
 
+async def _check_db() -> None:
+    from app.db.base import get_engine
+
+    async with get_engine().connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
+async def _check_redis(url: str) -> None:
+    r = aioredis.from_url(url)
+    try:
+        await r.ping()
+    finally:
+        await r.aclose()
+
+
+async def _check_neo4j(uri: str, user: str, pw: str) -> None:
+    from neo4j import AsyncGraphDatabase
+
+    driver = AsyncGraphDatabase.driver(uri, auth=(user, pw))
+    try:
+        await driver.verify_connectivity()
+    finally:
+        await driver.close()
+
+
 @router.get("/health")
 async def health() -> dict:
+    """Diagnostic + FAST: each store check is time-boxed and the three run concurrently, so a
+    single unreachable dependency (e.g. a wrong DATABASE_URL in prod) reports 'down' in a few
+    seconds instead of hanging the endpoint — which is what makes Render health checks and
+    debugging usable. Returns 200 even when degraded so the service stays up for diagnosis."""
+    import asyncio
+
     settings = get_settings()
-    status: dict[str, str] = {}
 
-    try:
-        from app.db.base import get_engine
+    async def guarded(coro, timeout: float = 5.0) -> str:
+        try:
+            await asyncio.wait_for(coro, timeout)
+            return "up"
+        except TimeoutError:
+            return "down: timeout"
+        except Exception as exc:  # pragma: no cover
+            return f"down: {type(exc).__name__}"
 
-        async with get_engine().connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        status["db"] = "up"
-    except Exception as exc:  # pragma: no cover
-        status["db"] = f"down: {type(exc).__name__}"
-
-    try:
-        r = aioredis.from_url(settings.redis_url)
-        await r.ping()
-        await r.aclose()
-        status["redis"] = "up"
-    except Exception as exc:  # pragma: no cover
-        status["redis"] = f"down: {type(exc).__name__}"
-
-    try:
-        from neo4j import AsyncGraphDatabase
-
-        driver = AsyncGraphDatabase.driver(
-            settings.neo4j_uri, auth=(settings.neo4j_username, settings.neo4j_password)
-        )
-        await driver.verify_connectivity()
-        await driver.close()
-        status["neo4j"] = "up"
-    except Exception as exc:  # pragma: no cover
-        status["neo4j"] = f"down: {type(exc).__name__}"
-
+    db, redis_s, neo = await asyncio.gather(
+        guarded(_check_db()),
+        guarded(_check_redis(settings.redis_url)),
+        guarded(_check_neo4j(settings.neo4j_uri, settings.neo4j_username,
+                             settings.neo4j_password)),
+    )
+    status = {"db": db, "redis": redis_s, "neo4j": neo}
     overall = "ok" if all(v == "up" for v in status.values()) else "degraded"
     return {"status": overall, **status}
 

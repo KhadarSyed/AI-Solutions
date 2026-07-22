@@ -13,7 +13,13 @@ class Base(DeclarativeBase):
 
 @lru_cache
 def get_engine():
-    return create_async_engine(get_settings().database_url, pool_pre_ping=True, pool_size=10)
+    # connect timeout so an unreachable/misconfigured DB fails fast (≤10s) instead of hanging
+    # the request — critical in prod, where a wrong DATABASE_URL otherwise blocks /health and
+    # every data route (e.g. the in-report chat) until the OS socket timeout.
+    return create_async_engine(
+        get_settings().database_url, pool_pre_ping=True, pool_size=10,
+        connect_args={"timeout": 10},
+    )
 
 
 @lru_cache

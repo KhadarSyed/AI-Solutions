@@ -48,11 +48,27 @@ services:
       # Set EMBEDDING_BACKEND=azure + a REAL AZURE_OPENAI_EMBED_DEPLOYMENT to use Azure.
       - { key: EMBEDDING_BACKEND,           value: local }
       - { key: AZURE_OPENAI_EMBED_DEPLOYMENT, sync: false }
-      # Public HTTPS base the in-report chat calls back to. Set to this service's URL,
-      # e.g. https://prsol-api.onrender.com — so "Ask the data agent" reaches the backend
-      # from the Vercel-hosted report (localhost is never reachable off the box).
-      - { key: PUBLIC_API_BASE,             sync: false }
+      # Public HTTPS base the in-report chat + drag-to-move call back to — so "Ask the data
+      # agent" reaches THIS backend from the Vercel-hosted report (localhost is never reachable
+      # off the box). Baked to this service's URL; change it if you rename the service.
+      - { key: PUBLIC_API_BASE,             value: https://prsol-api.onrender.com }
       - { key: TEAMS_MCP_URL,               value: https://teams-mcp-emrk.onrender.com/mcp }
+      # Agent mailbox identity + Graph mail delivery (matches the teams-mcp signed-in account)
+      - { key: AGENT_EMAIL,                 value: InfoVision.Agent1317@alphametricx.com }
+      - { key: EMAIL_DELIVERY,              value: graph }
+      # Zero-touch onboarding + gate policy (see settings.py). Keep AUTO_APPROVE_GATES=false
+      # for live manual approval; CC_STACK_EMAIL is org-specific so it stays a dashboard secret.
+      - { key: AUTHORIZED_SENDER_DOMAINS,   value: infovision.com }
+      - { key: AUTO_APPROVE_GATES,          value: "false" }
+      - { key: CC_STACK_EMAIL,              sync: false }
+      # Exact InfoVision Intelligence signature logo (served by this service's /static)
+      - { key: SIGNATURE_LOGO_URL,
+          value: https://prsol-api.onrender.com/static/brand/infovision-intelligence.png }
+      # Google web-search connector spawns Chromium per query and Google blocks automated
+      # search anyway — leave OFF in prod (Google News RSS + SerpAPI carry Google coverage).
+      - { key: GOOGLE_SEARCH_ENABLED,       value: "false" }
+      - { key: BROWSER_MCP_ENABLED,         value: "false" }
+      - { key: LOGFIRE_TOKEN,               sync: false }
       - { key: XPOZ_API_KEY,                sync: false }
       - { key: XPOZ_MCP_URL,                value: https://mcp.xpoz.ai/mcp }
       - { key: SERPAPI_API_KEY,             sync: false }
