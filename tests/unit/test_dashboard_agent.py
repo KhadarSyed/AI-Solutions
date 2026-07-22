@@ -81,8 +81,9 @@ def test_renderer_emits_self_contained_html():
     html = render(_schema())
     assert html.startswith("<!DOCTYPE html>")
     assert "<title>Trane — Media Intelligence</title>" in html
-    # Home is the default active tab in the multi-view; the overview tab still renders
-    assert 'data-t="overview"' in html
+    # top-level nav is Home · Daily Monitoring · Media Measurement (analytics live as sub-tabs
+    # inside Media Measurement); Home is the default active tab
+    assert 'data-t="daily"' in html and 'data-t="media"' in html
     assert 'class="tab on" data-t="home"' in html
     assert "echarts.init" in html and "var " not in html[:200]
     assert "<video autoplay muted loop" in html

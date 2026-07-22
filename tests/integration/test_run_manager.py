@@ -34,10 +34,14 @@ async def test_full_lifecycle_with_gates_and_events(blank_session):
     run_id = await rm.start(graph_name="pipeline", input_state=blank_session)
     assert await _wait_status(run_id, {"awaiting_human"}) == "awaiting_human"
 
-    # gate 1 payload persisted on the run row
+    # first gate raised is the PLAN gate (0), persisted on the run row
     async with get_sessionmaker()() as db:
         run = (await db.execute(select(Run).where(Run.id == uuid.UUID(run_id)))).scalar_one()
-    assert run.awaiting_input["gate"] == 1
+    assert run.awaiting_input["gate"] == 0
+
+    # approve plan → collection gate, approve → tagged gate, approve → complete
+    await rm.resume(run_id, {"decision": "approved"})
+    assert await _wait_status(run_id, {"awaiting_human"}) == "awaiting_human"
 
     await rm.resume(run_id, {"decision": "approved"})
     assert await _wait_status(run_id, {"awaiting_human"}) == "awaiting_human"
@@ -49,7 +53,7 @@ async def test_full_lifecycle_with_gates_and_events(blank_session):
     types = [e["event_type"] for e in events]
     assert types[0] == "run_started"
     assert "gate_raised" in types
-    assert types.count("awaiting_human") == 2
+    assert types.count("awaiting_human") == 3
     assert types[-1] == "run_completed"
     # ordered, gapless sequence
     seqs = [e["seq"] for e in events]
@@ -84,7 +88,9 @@ async def test_recovery_sweep_marks_stale_running():
                 heartbeat_at=datetime.now(UTC) - timedelta(minutes=10),
             )
         )
-    recovered = await rm.recovery_sweep()
+    # auto_resume=False so we test the marking in isolation (a resume of a checkpoint-less
+    # stale thread would otherwise move it off 'interrupted')
+    recovered = await rm.recovery_sweep(auto_resume=False)
     assert recovered >= 1
     async with get_sessionmaker()() as db:
         status = (
