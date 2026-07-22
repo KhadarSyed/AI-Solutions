@@ -242,6 +242,17 @@ async def _classify(inbound: ChannelInbound, has_pending_gate: bool) -> InboundI
         brand = _detect_brand(text)
         if brand:
             return InboundIntent(kind="start_run", brand=brand)
+    # When a gate is pending, tell the LLM so it reads the reply as the user's DECISION and
+    # detects approval intent in any wording the deterministic path didn't catch.
+    gate_note = (
+        "\n\nA review/approval gate is CURRENTLY PENDING for this task, so treat the reply as "
+        "the user's decision on it. Set kind='gate_decision' and gate_decision='approved' when "
+        "they consent to proceed in ANY phrasing or case (e.g. 'approve', 'Approved', 'yes', "
+        "'ok', 'sure', 'sounds good', 'go for it', 'ship it', 'proceed', a thumbs-up), including "
+        "approving while asking to ADD a data point. Use gate_decision='changes' only for a "
+        "scope change (different competitor, date range, or redo). Use kind='question' only if "
+        "it is clearly an unrelated question and not a decision at all."
+        if has_pending_gate else "")
     agent = GuardedAgent(
         purpose="inbound_intent", stage="email_agent",
         system_prompt=(
@@ -251,13 +262,17 @@ async def _classify(inbound: ChannelInbound, has_pending_gate: bool) -> InboundI
             "gate_decision to 'approved' or 'changes'. Approving includes 'yes', 'go ahead', "
             "'sign off', or approving while asking to ADD a data point to tag (still "
             "approved). Use 'changes' only for scope changes: a different competitor, date "
-            "range, or redo."
+            "range, or redo." + gate_note
         ),
         output_type=InboundIntent, temperature=0.0, user_originated_input=True,
     )
     try:
+        # the gate-aware prompt lets the LLM determine the true intention (approve / changes /
+        # question) for any wording the deterministic keywords didn't catch
         return await agent.run(f"Subject: {inbound.subject}\n\n{inbound.text}")
     except Exception:
+        # LLM unavailable: don't guess a decision (obvious approvals were already caught by
+        # the keyword pass); leave the gate pending and treat it as a question to be safe
         return InboundIntent(kind="question")
 
 
