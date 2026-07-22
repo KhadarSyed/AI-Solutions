@@ -223,6 +223,30 @@ def status_html(task_id, brand, agent, phase, message, *, icon: str = "") -> str
     )
 
 
+def ack_html(task_id, brand, message, *, brands_logos=None) -> str:
+    """A styled acknowledgement card (task started / approval recorded / answer), threaded
+    in the task conversation. When brands_logos is given it shows the brand (+ competitor)
+    logos — the same 'in scope' row as the Plan email."""
+    tag = f"[{task_id}] " if task_id else ""
+    scope = _card("In scope", _logo_row(brands_logos)) if brands_logos else ""
+    return (
+        f"{_preheader(str(message)[:90])}"
+        f'<div style="background:{_BG};padding:18px 14px;font-family:{_BODY_FONT}">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+        f'<td align="center"><table role="presentation" width="640" cellpadding="0" '
+        f'cellspacing="0" style="max-width:640px;width:100%"><tr><td>'
+        f'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;'
+        f'color:{_MUTED}">{_esc(tag)}{_esc(brand)} Monitoring</div>'
+        f'<div style="background:{_CARD};border:1px solid {_BORDER};border-left:3px solid '
+        f'{_ACCENT};border-radius:12px;padding:16px;margin-top:10px">'
+        f'<div style="font-size:14px;color:{_INK};line-height:1.6">{_esc(message)}</div>'
+        f'</div>{scope}'
+        f'<div style="color:#a7a19a;font-size:11px;margin-top:12px">PR Intelligence Agent · '
+        f'replies stay in this thread.</div>'
+        f'</td></tr></table></td></tr></table></div>'
+    )
+
+
 def plan_html(task_id, brand, stats, *, brands_logos, duration, intent, goal,
               boolean_queries) -> str:
     q_rows = [[q] for q in boolean_queries[:12]]

@@ -326,16 +326,46 @@ def _merge_cc(*lists) -> list[str]:
     return seen
 
 
-async def _thread_reply(inbound: ChannelInbound, adapter, text: str, *,
-                        run=None, subject: str | None = None, html: str = "") -> None:
-    """Reply on the task's ONE conversation with the full task identity attached.
+async def _ack_logos(project_id: str, names: list[str]) -> list | None:
+    """[(name, logo_url|None, None)] for the brand (+ competitors) — the 'in scope' logo row
+    shown on acknowledgement cards, resolved the same way the Plan email does."""
+    names = [n for n in names if n]
+    if not project_id or not names:
+        return None
+    with contextlib.suppress(Exception):
+        from app.tools.enrichment.logos import logo_urls
 
-    Every acknowledgement and answer the email agent sends is threaded and CC'd exactly
-    like the pipeline's stage emails: it carries the task anchor (the run's message id,
-    or the message being replied to), the Task ID, the origin email address, and the task
-    CC (settings always-CC + the run's persisted CC + this message's CC). This is what
-    keeps Task + Message-id + email address in context so the whole task is tracked in a
-    single thread through completion."""
+        urls = await logo_urls(project_id, names)
+        return [(n, urls.get(n), None) for n in names]
+    return None
+
+
+async def _run_scope(run) -> tuple[str, list[str], str]:
+    """(brand, competitors, project_id) for a run, from its session config — used to render
+    the brand/competitor logos on gate acknowledgements."""
+    if run is None:
+        return "", [], ""
+    with contextlib.suppress(Exception):
+        async with get_sessionmaker()() as db:
+            s = await db.get(SessionRow, run.session_id)
+        if s:
+            cfg = s.config or {}
+            return cfg.get("brand", ""), list(cfg.get("competitors", []) or []), str(s.project_id)
+    return "", [], ""
+
+
+async def _thread_reply(inbound: ChannelInbound, adapter, text: str, *,
+                        run=None, subject: str | None = None, brand: str = "",
+                        brands_logos=None) -> None:
+    """Reply on the task's ONE conversation with the full task identity attached, as a
+    branded HTML card (matching the stage emails) with the brand/competitor logos when
+    available.
+
+    Every acknowledgement and answer carries the task anchor (the run's message id, or the
+    message being replied to), the Task ID, the origin email address, and the task CC
+    (settings always-CC + the run's persisted CC + this message's CC) — so Task + Message-id
+    + email address stay in context and the whole task tracks in a single thread."""
+    from app.channels import stage_report
     from app.channels.notifier import _send_threaded, _task_cc
 
     base = dict((run.origin_address if run is not None else None) or inbound.address or {})
@@ -351,6 +381,11 @@ async def _thread_reply(inbound: ChannelInbound, adapter, text: str, *,
     if run is not None:
         state["run_id"] = str(run.id)
         state["task_id"] = base.get("task_id")
+    tid = base.get("task_id") or ""
+    html = ""
+    with contextlib.suppress(Exception):
+        html = stage_report.ack_html(tid, brand or "Monitoring", text,
+                                     brands_logos=brands_logos)
     cc = await _task_cc(state)
     with contextlib.suppress(Exception):
         await _send_threaded(state, adapter, OutboundMessage(
@@ -401,7 +436,8 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
     )
     log.info("inbound.start_run", brand=brand, channel=inbound.channel,
              run_id=run_id, task_id=task_id)
-    return {"run_id": run_id, "session_id": sid, "brand": brand, "task_id": task_id}
+    return {"run_id": run_id, "session_id": sid, "brand": brand, "task_id": task_id,
+            "competitors": competitors, "project_id": str(project.id)}
 
 
 async def handle_inbound(inbound: ChannelInbound) -> dict:
@@ -436,8 +472,11 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
     if intent.kind == "start_run" and run is None:
         result = await _start_run(project, intent.brand, inbound)
         tid = result["task_id"]
+        logos = await _ack_logos(result.get("project_id", project_id),
+                                 [intent.brand, *result.get("competitors", [])])
         await _thread_reply(
             inbound, adapter, subject=f"[{tid}] {intent.brand} Monitoring",
+            brand=intent.brand, brands_logos=logos,
             text=(f"Task {tid} started for {intent.brand}. The WebSearch Agent is "
                   "collecting coverage now; I'll email the collected articles here for "
                   f"your review shortly. Keep [{tid}] in the subject on any reply."))
@@ -487,21 +526,24 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
                         resume_payload["monitoring_csv_key"] = key
                     break
         await get_run_manager().resume(str(run.id), resume_payload)
+        g_brand, g_comps, g_pid = await _run_scope(run)
+        logos = await _ack_logos(g_pid, [g_brand, *g_comps])
         await _thread_reply(
-            inbound, adapter, run=run,
+            inbound, adapter, run=run, brand=g_brand, brands_logos=logos,
             text=(f"Thanks — recorded your '{decision}'. "
                   + ("Continuing the pipeline now." if decision == "approved"
                      else "Re-running with your changes.")))
         return {"handled": True, "action": f"gate_{decision}", "run_id": str(run.id)}
 
+    r_brand = (await _run_scope(run))[0] or _detect_brand(inbound.text)
     # "list / send my reports" → the report archive (before the grounded Q&A path)
     if _REPORTS_RE.search(inbound.text):
         listing = await _reports_reply(project_id, _detect_brand(inbound.text))
-        await _thread_reply(inbound, adapter, run=run, text=listing)
+        await _thread_reply(inbound, adapter, run=run, brand=r_brand, text=listing)
         return {"handled": True, "action": "list_reports"}
 
     # question / report / change → grounded reply (change-request re-run is scoped to
     # the pipeline's gate-changes loop; a bare change with no pending gate is answered)
     answer = await _answer_query(project_id, run, inbound)
-    await _thread_reply(inbound, adapter, run=run, text=answer)
+    await _thread_reply(inbound, adapter, run=run, brand=r_brand, text=answer)
     return {"handled": True, "action": intent.kind}
