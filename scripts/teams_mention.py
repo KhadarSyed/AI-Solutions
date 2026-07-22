@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import contextlib
+
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 PROFILE = Path("data/local/teams_browser_profile")
@@ -34,10 +36,8 @@ def main() -> None:
             args=["--start-maximized"], no_viewport=True,
         )
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        try:
+        with contextlib.suppress(Exception):
             page.goto("https://teams.microsoft.com/", wait_until="domcontentloaded", timeout=60000)
-        except Exception:
-            pass
         print("WAITING — open PRSolution > BeOne and click the message box.")
 
         compose = None

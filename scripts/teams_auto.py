@@ -3,12 +3,13 @@ Teams profile. Navigates by deep link (correct org/team/channel), waits out the
 slow loader, selects the agent from the mention popup, and sends. Screenshots at
 each step land in data/local/ for verification."""
 
-import re
 import sys
 import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import contextlib
+
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 PROFILE = Path("data/local/teams_browser_profile")
@@ -48,10 +49,8 @@ def main():
             user_data_dir=str(PROFILE), headless=False,
             args=["--start-maximized"], no_viewport=True)
         page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        try:
+        with contextlib.suppress(Exception):
             page.goto("https://teams.microsoft.com/", wait_until="domcontentloaded", timeout=90000)
-        except Exception:
-            pass
 
         # wait for the user to sign in as khadar (up to 12 min)
         print("SIGN IN as khadar.syed@infovision.com in this window, then wait...")
@@ -72,7 +71,10 @@ def main():
                 print(f"  ...waiting for sign-in ({i*2}s) url={u[:60]}")
             time.sleep(2)
         if not signed:
-            shot(page, "0_signin"); print("NOT_SIGNED_IN"); time.sleep(3); return
+            shot(page, "0_signin")
+            print("NOT_SIGNED_IN")
+            time.sleep(3)
+            return
 
         # No deep link (it triggers cross-tenant re-auth). The user navigates to
         # PRSolution > General in THIS window; we wait for the compose box.
@@ -83,13 +85,15 @@ def main():
             page = ctx.pages[-1]
             try:
                 if page.locator("#loading-screen").count():
-                    time.sleep(2); continue
+                    time.sleep(2)
+                    continue
             except Exception:
                 pass
             for sel in COMPOSE:
                 loc = page.locator(sel)
                 if loc.count() and loc.first.is_visible():
-                    compose = loc.first; break
+                    compose = loc.first
+                    break
             if compose:
                 print(f"compose box visible after {i*2}s")
                 break
@@ -97,7 +101,10 @@ def main():
                 print(f"  ...waiting for the General compose box ({i*2}s)")
             time.sleep(2)
         if not compose:
-            shot(page, "2_nocompose"); print("NO_COMPOSE"); time.sleep(3); return
+            shot(page, "2_nocompose")
+            print("NO_COMPOSE")
+            time.sleep(3)
+            return
 
         try:
             compose.click(force=True, timeout=8000)
@@ -116,13 +123,17 @@ def main():
                 for i in range(min(opts.count(), 12)):
                     txt = (opts.nth(i).inner_text() or "")
                     if "Agent1317" in txt or "InfoVision Agent" in txt:
-                        opts.nth(i).click(timeout=4000); picked = True; break
+                        opts.nth(i).click(timeout=4000)
+                        picked = True
+                        break
             except Exception:
                 pass
             if picked:
                 break
         if not picked:                      # fallback: keyboard select first
-            page.keyboard.press("ArrowDown"); time.sleep(0.4); page.keyboard.press("Enter")
+            page.keyboard.press("ArrowDown")
+            time.sleep(0.4)
+            page.keyboard.press("Enter")
         time.sleep(1)
         shot(page, "4_afterpick")
         page.keyboard.type(" start BeOne monitoring", delay=45)

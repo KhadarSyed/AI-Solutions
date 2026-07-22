@@ -1,6 +1,8 @@
 """Attach to the running Teams browser (CDP) and report what's on screen so we
 know whether we're in the BeOne channel with a compose box ready."""
 
+import contextlib
+
 from playwright.sync_api import sync_playwright
 
 
@@ -11,10 +13,8 @@ def main() -> None:
         pages = ctx.pages
         print(f"pages open: {len(pages)}")
         for pg in pages:
-            try:
+            with contextlib.suppress(Exception):
                 print(f"  url: {pg.url[:90]}")
-            except Exception:
-                pass
         # pick the Teams page
         page = next((pg for pg in pages if "teams" in pg.url), pages[0])
         print(f"active title: {page.title()[:80]}")
