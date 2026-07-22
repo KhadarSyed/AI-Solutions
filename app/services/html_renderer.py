@@ -447,9 +447,11 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
             bits.append(_e(country.upper()))
         bits.append(when)
         meta = " · ".join(bits) + reach_s
-        # syndication count badge → popup listing the republished copies
+        # syndication count badge → popup with the same rich cards as 'similar'
+        # (each republished copy links out under the shared story title)
         syn = [u for u in (r.get("syndicated") or []) if u]
-        syn_badge = (f'<button class="dm-syn" data-urls="{_e("|".join(syn))}" type="button">'
+        syn_badge = (f'<button class="dm-syn" data-title="{_e(r.get("title",""))}" '
+                     f'data-urls="{_e("|".join(syn))}" type="button">'
                      f'&#128279; {len(syn)} syndicated</button>' if syn else "")
         # similar-articles badge → popup (data lives in the SIM map, keyed by article id)
         sim = r.get("similar") or []
@@ -505,7 +507,22 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
 
 _DAILY_JS = r"""
 function __dailyInit(CFG){
-  var API=(CFG.api_base||window.location.origin).replace(/\/$/,'');
+  var DM_PRIMARY=(CFG.api_base||window.location.origin).replace(/\/$/,'');
+  var DM_FALLBACK=(CFG.fallback_api_base||'').replace(/\/$/,'');
+  function dmPost(path,payload){   // same-origin first, then the public API base (see chatPost)
+    var bases=[DM_PRIMARY];
+    if(DM_FALLBACK && DM_FALLBACK!==DM_PRIMARY) bases.push(DM_FALLBACK);
+    var i=0;
+    function go(){
+      return fetch(bases[i]+path,{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify(payload)})
+        .then(function(r){
+          if(!r.ok && (r.status===404||r.status===405||r.status>=500) && i+1<bases.length){i++;return go();}
+          return r;})
+        .catch(function(e){ if(i+1<bases.length){i++;return go();} throw e; });
+    }
+    return go();
+  }
   var main=document.getElementById('dm-main'), secs=document.getElementById('dm-secs');
   var dragEl=null;
   // section select + date + text filters all compose into one pass
@@ -552,17 +569,21 @@ function __dailyInit(CFG){
     var id=dragEl.getAttribute('data-id'), note=document.createElement('span');
     note.className='dm-save'; note.textContent='saving…';
     (dragEl.querySelector('.dm-title-row')||dragEl.querySelector('.dm-title')).appendChild(note);
-    fetch(API+'/chat/'+CFG.session_id+'/section',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({article_id:id,section:toSec,token:CFG.token})})
-     .then(function(r){note.textContent=r.ok?'moved ✓':'save failed';
-        setTimeout(function(){note.remove();},1800);})
-     .catch(function(){note.textContent='offline';setTimeout(function(){note.remove();},1800);});
+    dmPost('/chat/'+CFG.session_id+'/section',{article_id:id,section:toSec,token:CFG.token})
+     .then(function(r){note.textContent=r.ok?'moved ✓':('save failed ('+r.status+')');
+        setTimeout(function(){note.remove();},2200);})
+     .catch(function(){note.textContent='offline';setTimeout(function(){note.remove();},2200);});
   });
   function recount(){
+    var per={},total=0;
     main.querySelectorAll('.dm-sec').forEach(function(s){
-      var n=s.querySelectorAll('.dm-art').length; var c=s.querySelector('[data-count]');
-      if(c)c.textContent=n;});
+      var sec=s.getAttribute('data-sec'), n=s.querySelectorAll('.dm-art').length;
+      per[sec]=n; total+=n;
+      var c=s.querySelector('[data-count]'); if(c)c.textContent=n;});
+    // keep the sidebar section counts (and the All-sections total) in sync after a move
+    secs.querySelectorAll('li').forEach(function(li){
+      var sec=li.getAttribute('data-sec'), c=li.querySelector('.c'); if(!c)return;
+      c.textContent=(sec==='__all')?total:(per[sec]!==undefined?per[sec]:0);});
   }
   // ---- syndication / similar-articles popup ----
   var modal=document.getElementById('dm-modal');
@@ -579,10 +600,12 @@ function __dailyInit(CFG){
     document.getElementById('dm-modal-body').innerHTML=html||'<div class="dm-empty">Nothing to show.</div>';
     modal.hidden=false;}
   function closeModal(){if(modal)modal.hidden=true;}
-  function synHtml(urls){
+  function synHtml(title,urls){
     var rows=urls.filter(httpOk).map(function(u){
-      return '<div class="dm-synrow">'+fav(u)+'<a href="'+esc(u)+'" target="_blank" '
-        +'rel="noopener noreferrer">'+esc(dom(u))+'</a><span class="d">open ↗</span></div>';});
+      return '<div class="dm-simcard"><a class="t" href="'+esc(u)+'" target="_blank" '
+        +'rel="noopener noreferrer">'+esc(title||dom(u))+'</a><div class="m">'
+        +'<span class="dm-why">Syndicated</span>'
+        +'<span>'+fav(u)+' '+esc(dom(u))+'</span></div></div>';});
     return rows.join('')||'<div class="dm-empty">No valid links.</div>';}
   function simHtml(items){
     if(!items.length)return '<div class="dm-empty">No similar articles.</div>';
@@ -599,8 +622,10 @@ function __dailyInit(CFG){
       return '<div class="dm-simcard">'+t+'<div class="m">'+m+'</div></div>';}).join('');}
   main.addEventListener('click',function(e){
     var syn=e.target.closest('.dm-syn');
-    if(syn){var urls=(syn.getAttribute('data-urls')||'').split('|').filter(Boolean);
-      openModal(urls.length+' syndicated '+(urls.length===1?'copy':'copies'),synHtml(urls));return;}
+    if(syn){var title=syn.getAttribute('data-title')||'';
+      var urls=(syn.getAttribute('data-urls')||'').split('|').filter(Boolean);
+      openModal(urls.length+' syndicated '+(urls.length===1?'copy':'copies'),
+                synHtml(title,urls));return;}
     var sim=e.target.closest('.dm-sim');
     if(sim){var items=(CFG.sim||{})[sim.getAttribute('data-id')]||[];
       openModal(items.length+' similar '+(items.length===1?'article':'articles'),simHtml(items));}
@@ -613,7 +638,25 @@ function __dailyInit(CFG){
 
 _CHAT_JS = r"""
 const CHAT=__CHAT_JSON__;
-const CHAT_API=(CHAT.api_base||window.location.origin).replace(/\/$/,'');
+const CHAT_PRIMARY=(CHAT.api_base||window.location.origin).replace(/\/$/,'');
+const CHAT_FALLBACK=(CHAT.fallback_api_base||'').replace(/\/$/,'');
+// POST to the same-origin API first; if that host has no such route (404/405) or errors
+// (5xx / network), retry the configured public API base — this is what lets chat work on a
+// Vercel-hosted report whose own origin has no /chat route.
+function chatPost(path,payload){
+  var bases=[CHAT_PRIMARY];
+  if(CHAT_FALLBACK && CHAT_FALLBACK!==CHAT_PRIMARY) bases.push(CHAT_FALLBACK);
+  var i=0;
+  function go(){
+    return fetch(bases[i]+path,{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify(payload)})
+      .then(function(r){
+        if(!r.ok && (r.status===404||r.status===405||r.status>=500) && i+1<bases.length){i++;return go();}
+        return r;})
+      .catch(function(e){ if(i+1<bases.length){i++;return go();} throw e; });
+  }
+  return go();
+}
 function chatToggle(){document.getElementById('chatPanel').classList.toggle('open');}
 function chatEsc(s){return (s||'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
 function chatTime(ts){
@@ -681,12 +724,12 @@ function chatSend(){
   var q=(inp.value||'').trim(); if(!q)return; inp.value='';
   log.insertAdjacentHTML('beforeend','<div class="chat-msg user">'+chatEsc(q)+'</div>');
   var t=document.createElement('div'); t.className='chat-msg bot'; t.textContent='…'; log.appendChild(t); log.scrollTop=log.scrollHeight;
-  fetch(CHAT_API+'/chat/'+CHAT.session_id,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q,token:CHAT.token})})
-   .then(r=>r.json().then(d=>({ok:r.ok,d})))
-   .then(o=>{ if(!o.ok){t.textContent=(o.d&&o.d.detail)||'That request failed.';}
+  chatPost('/chat/'+CHAT.session_id,{question:q,token:CHAT.token})
+   .then(r=>r.json().then(d=>({ok:r.ok,status:r.status,d})).catch(()=>({ok:false,status:r.status,d:null})))
+   .then(o=>{ if(!o.ok){t.textContent=(o.d&&o.d.detail)||('Request failed ('+o.status+').');}
      else { t.innerHTML=chatMd(o.d.answer)+'<span class="ts">'+chatTime(o.d.timestamp)+'</span>'; chatInitCharts(t); }
      log.scrollTop=log.scrollHeight; })
-   .catch(()=>{t.textContent='Network error — is the agent reachable?';});
+   .catch(()=>{t.textContent='Network error — the agent host is unreachable.';});
 }
 document.addEventListener('DOMContentLoaded',function(){var i=document.getElementById('chatIn'); if(i)i.addEventListener('keydown',function(e){if(e.key==='Enter')chatSend();});});
 """

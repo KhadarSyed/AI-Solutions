@@ -228,11 +228,15 @@ def _chat_config(session_id: str) -> dict:
     from app.security.auth import chat_token
 
     s = get_settings()
-    # Prefer the public base (set at deploy); empty → the widget uses window.location.origin
-    # so a dashboard served from the API is same-origin and the chat just works.
-    api_base = (s.public_api_base or s.chat_api_base).rstrip("/")
+    # Primary base: window.location.origin by default (chat_api_base only if a specific
+    # primary override is configured) — so a dashboard served BY the API is same-origin and
+    # just works. fallback_api_base is the public API URL the widget retries against when the
+    # primary call fails — this is what makes chat work on a Vercel-hosted dashboard, whose
+    # own origin has no /chat route. Set PUBLIC_API_BASE on the backend that holds the report.
     return {"session_id": session_id, "token": chat_token(session_id),
-            "api_base": api_base, "window_days": 3}
+            "api_base": s.chat_api_base.rstrip("/"),
+            "fallback_api_base": s.public_api_base.rstrip("/"),
+            "window_days": 3}
 
 
 async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:
