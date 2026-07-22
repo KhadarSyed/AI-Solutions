@@ -191,8 +191,11 @@ class TeamsMcpAdapter(ChannelAdapter):
         cc = message.cc or address.get("cc") or []
         msg_id = address.get("message_id")
         if msg_id:
-            # reply comment renders as HTML in-thread when we have a styled body
-            args: dict = {"messageId": msg_id, "comment": message.html or message.text}
+            # reply comment renders as HTML in-thread when we have a styled body. mail_reply
+            # has no `cc` param, so replyAll keeps everyone the user CC'd on the trigger on
+            # every threaded reply (the reliable way to carry CC on a threaded conversation).
+            args: dict = {"messageId": msg_id, "comment": message.html or message.text,
+                          "replyAll": True}
         else:
             args = {"to": address.get("to"),
                     "subject": message.subject or "PR Intelligence Agent",
