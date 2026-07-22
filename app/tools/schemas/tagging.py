@@ -79,6 +79,17 @@ class TaggedArticle(BaseModel):
     xai_theme_reason: str = Field(description="Plain-language reason — mandatory")
     xai_relevancy_reason: str = Field(description="Plain-language reason — mandatory")
 
+    is_relevant: bool = Field(
+        default=True,
+        description="True ONLY if the article is genuinely about the brand, its competitors, "
+        "or the monitored industry as the user intends — NOT a mere name/keyword collision "
+        "(e.g. a baseball or wrestling story that only mentions a stadium named after an HVAC "
+        "brand). Set False to DROP off-topic coverage; such items are excluded from monitoring.")
+    summary: str = Field(
+        default="",
+        description="1–2 sentence factual summary of the article's substance, grounded in its "
+        "actual content (who/what/why it matters). No opinion, no marketing, no filler.")
+
     entities: ArticleEntities = Field(default_factory=ArticleEntities)
     spokesperson_level: str = Field(
         default="none", description="c_suite | mid_level | none — highest level quoted/mentioned"
@@ -125,4 +136,12 @@ Tag every article in the batch with ALL fields. Golden rules:
 - Entities: list actual names found in the text; brand mentions under brand_of_interest,
   known competitors under competitors, other rival companies under other_competitors,
   product/service names under products, people under peoples, orgs under organizations.
+- summary: 1-2 factual sentences on what the article actually says and why it matters —
+  grounded in the content, no opinion or marketing. This is shown on every dashboard card.
+- is_relevant: the ROBUST relevance gate. Set FALSE when the article is not genuinely about
+  the brand, its competitors, or the monitored industry as the user intends — especially a
+  mere name/keyword COLLISION (e.g. a baseball/wrestling story that only mentions a stadium
+  named after an HVAC brand, a celebrity who shares a brand's name, an unrelated product with
+  the same word). Off-topic items (is_relevant=false) are DROPPED from monitoring, so judge
+  strictly against the brand + industry intent, not surface keyword matches.
 Return one TaggedArticle per input article, index matching the batch order."""

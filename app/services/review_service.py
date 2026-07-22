@@ -178,6 +178,10 @@ async def bulk_approve(*, project_id: str, session_id: str,
 
     def mutate(payload: dict) -> list[dict]:
         for a in payload.get("articles", []):
+            # off-topic items (tagger's is_relevant=False — e.g. a name/keyword collision)
+            # are never approved or monitored, so they're dropped from the dashboard/report
+            if a.get("is_relevant") is False:
+                continue
             a["is_approved"] = True
             if for_monitoring:
                 a["is_approved_for_monitoring"] = True

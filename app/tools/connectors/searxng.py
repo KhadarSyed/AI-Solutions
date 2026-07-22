@@ -36,7 +36,7 @@ def _parse_date(value) -> datetime | None:
 
 class SearxngConnector(Connector):
     name = "searxng"
-    capabilities = Capabilities(language=True, max_results=True)
+    capabilities = Capabilities(language=True, max_results=True, date_range=True)
 
     def enabled(self) -> bool:
         return bool(get_settings().searxng_url)
@@ -44,6 +44,11 @@ class SearxngConnector(Connector):
     async def search(self, queries: list[str], filters: SearchFilters) -> ConnectorResult:
         result = ConnectorResult()
         base = get_settings().searxng_url.rstrip("/")
+        db = filters.days_back or 2
+        # SearXNG time_range is coarse (day/week/month/year); the ingestion date cut enforces
+        # the exact window. Still send it so the source returns fewer stale items.
+        time_range = ("day" if db <= 1 else "week" if db <= 7
+                      else "month" if db <= 31 else "year")
 
         async def one(query: str) -> None:
             params = {
@@ -51,6 +56,7 @@ class SearxngConnector(Connector):
                 "format": "json",
                 "categories": "news",
                 "language": filters.language or "en",
+                "time_range": time_range,
             }
             try:
                 async with httpx.AsyncClient(timeout=20) as client:

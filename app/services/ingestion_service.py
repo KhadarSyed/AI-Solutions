@@ -90,6 +90,30 @@ def _cos(u: list[float], v: list[float]) -> float:
     return dot / (nu * nv) if nu and nv else 0.0
 
 
+def _within_window(articles: list[RawArticle], days_back: int) -> list[RawArticle]:
+    """Hard date cut: drop anything published before (today − days_back). Source-side date
+    filters are best-effort (SearXNG/DDG return older items), so this is the guarantee that a
+    '2 day' window never surfaces 2024 coverage. Undated items are kept (can't be disproved)
+    but counted so leakage is visible."""
+    from datetime import date, timedelta
+
+    cutoff = date.today() - timedelta(days=max(1, days_back))
+    kept: list[RawArticle] = []
+    dropped = undated = 0
+    for a in articles:
+        d = a.published_date
+        if d is None:
+            undated += 1
+            kept.append(a)
+        elif d >= cutoff:
+            kept.append(a)
+        else:
+            dropped += 1
+    log.info("ingestion.date_window", days_back=days_back, cutoff=str(cutoff),
+             before=len(articles), after=len(kept), dropped_old=dropped, undated=undated)
+    return kept
+
+
 async def relevancy_filter(
     articles: list[RawArticle], brand: str, queries: list[str],
     threshold: float | None = None,
@@ -211,6 +235,7 @@ async def collect(
     await asyncio.gather(*tasks)
 
     unique, syndication = dedupe(collected)
+    unique = _within_window(unique, days_back)   # HARD date cut — source filters are best-effort
     all_queries = [q for g in query_groups for q in g.get("queries", [])]
     kept = await relevancy_filter(unique, brand, all_queries)
 

@@ -249,21 +249,35 @@ async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:
              "date": str(a.get("published_date") or ""),
              "time": str(a.get("published_time") or ""),
              "title": a.get("title", ""),
-             "snippet": (a.get("content") or "")[:220],
+             # the tagger's grounded summary; fall back to de-HTML'd content (never the raw
+             # <a href> RSS redirect that used to show)
+             "summary": (a.get("summary") or _plain(a.get("content", "")))[:280],
              "url": a.get("url", ""),
              "publisher": a.get("publisher_name") or a.get("publisher_domain", ""),
+             "publisher_domain": a.get("publisher_domain", ""),
              "author": a.get("author", ""),
+             "country": (a.get("country") or "").strip(),
              "reach": a.get("monthly_reach") or 0,
              "priority": bool(a.get("priority_watch")),
              "sentiment": a.get("xai_sentiment", "NEU"),
              "theme": a.get("theme_primary") or a.get("xai_theme", ""),
              "emotions": "; ".join(a.get("emotions", []) or []),
              "signals": "; ".join(a.get("signals", []) or []),
+             "syndicated": [u for u in (a.get("syndicated_urls") or []) if u],
              "section": a.get("xai_section", "") or "Uncategorized"}
-            for a in payload.get("articles", []) if a.get("is_approved_for_monitoring")
+            for a in payload.get("articles", [])
+            if a.get("is_approved_for_monitoring") and a.get("is_relevant", True) is not False
         ]
         return rows[:limit]
     return []
+
+
+def _plain(html_or_text: str) -> str:
+    """Strip HTML tags/entities so a card never shows a raw <a href> or markup."""
+    import re
+    t = re.sub(r"<[^>]+>", " ", html_or_text or "")
+    t = re.sub(r"&[a-z#0-9]+;", " ", t)
+    return re.sub(r"\s+", " ", t).strip()
 
 
 async def build_schema(request: DashboardRequest) -> dict:

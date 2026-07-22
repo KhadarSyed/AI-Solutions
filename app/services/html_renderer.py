@@ -351,6 +351,16 @@ a.dm-title::after{content:"\2197";font-size:11px;color:var(--muted);margin-left:
 .dm-tags{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
 .dm-tag{font-size:11px;color:var(--muted);background:var(--card2);border-radius:20px;padding:2px 9px}
 .dm-save{font-size:11px;color:var(--accent);margin-left:8px}
+.dm-fav{border-radius:3px;vertical-align:-2px;margin-right:5px}
+.dm-sent{display:inline-block;font-size:10px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;border-radius:6px;padding:2px 7px;margin-left:8px}
+.dm-sent-pos{background:#e5f4ec;color:#16794b}
+.dm-sent-neg{background:#fde7e1;color:#b5462f}
+.dm-sent-neu{background:#eef0f2;color:#6b7280}
+.dm-syn{font-size:11px;font-weight:600;color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);
+  border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);border-radius:20px;padding:2px 10px;
+  cursor:pointer;font-family:inherit}
+.dm-syn:hover{background:color-mix(in srgb,var(--accent) 15%,transparent)}
 </style>"""
 
 
@@ -384,19 +394,37 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
     def _card(r: dict) -> str:
         sent = (r.get("sentiment") or "NEU").upper()
         dot = {"POS": "dm-pos", "NEG": "dm-neg"}.get(sent, "dm-neu")
+        sent_label = {"POS": "Positive", "NEG": "Negative"}.get(sent, "Neutral")
+        sent_pill = f'<span class="dm-sent dm-sent-{sent.lower()}">{sent_label}</span>'
         badge = '<span class="dm-badge">Priority</span>' if r.get("priority") else ""
         reach = r.get("reach") or 0
         reach_s = (f" · reach {reach/1_000_000:.1f}M" if reach >= 1_000_000
                    else f" · reach {reach/1000:.0f}K" if reach >= 1000 else "")
         tags = "".join(f'<span class="dm-tag">{_e(x)}</span>' for x in
                        [r.get("theme"), r.get("emotions"), r.get("signals")] if x)
-        search = _e(" ".join(str(r.get(k, "")) for k in
-                    ("title", "publisher", "theme", "emotions", "signals", "author")).lower())
-        # date is always shown (formatted); a genuinely unknown one reads "date n/a"
+        # publisher with favicon icon
+        pubdom = r.get("publisher_domain", "")
+        icon = (f'<img class="dm-fav" src="https://www.google.com/s2/favicons?domain='
+                f'{_e(pubdom)}&sz=32" width="15" height="15" alt="" loading="lazy">'
+                if pubdom else "")
         when = _fmt_date(r.get("date", "")) or "date n/a"
         if r.get("time"):
             when += f" · {_e(r.get('time', ''))}"
-        meta = " · ".join([_e(r.get("publisher", "")) or "—", when])
+        country = (r.get("country") or "").strip()
+        bits = [f'{icon}{_e(r.get("publisher", "")) or "—"}']
+        if r.get("author"):
+            bits.append(_e(r.get("author", "")))
+        if country and country.lower() != "all":
+            bits.append(_e(country.upper()))
+        bits.append(when)
+        meta = " · ".join(bits) + reach_s
+        # syndication count badge (Phase 2 turns this into a popup)
+        syn = [u for u in (r.get("syndicated") or []) if u]
+        syn_badge = (f'<button class="dm-syn" data-urls="{_e("|".join(syn))}" type="button">'
+                     f'&#128279; {len(syn)} syndicated</button>' if syn else "")
+        search = _e(" ".join(str(r.get(k, "")) for k in
+                    ("title", "publisher", "author", "country", "summary",
+                     "theme", "emotions", "signals")).lower())
         title = _e(r.get("title", "")) or "(untitled)"
         href = _safe_http_url(r.get("url", ""))
         title_html = (f'<a class="dm-title" href="{href}" target="_blank" '
@@ -407,10 +435,10 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
             f'data-date="{_e(r.get("date",""))}" data-text="{search}">'
             f'<span class="dm-handle" title="drag to move section">&#8942;&#8942;</span>'
             f'<span class="dm-dot {dot}"></span>'
-            f'<div style="flex:1"><div class="dm-title-row">{title_html}{badge}</div>'
-            f'<div class="dm-meta">{meta}{reach_s}</div>'
-            f'<div class="dm-snip">{_e(r.get("snippet",""))}</div>'
-            f'<div class="dm-tags">{tags}</div></div></article>')
+            f'<div style="flex:1"><div class="dm-title-row">{title_html}{badge}{sent_pill}</div>'
+            f'<div class="dm-meta">{meta}</div>'
+            f'<div class="dm-snip">{_e(r.get("summary", ""))}</div>'
+            f'<div class="dm-tags">{tags}{syn_badge}</div></div></article>')
 
     sections = ""
     for sec, n in counts.most_common():
