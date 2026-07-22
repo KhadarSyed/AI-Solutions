@@ -445,9 +445,12 @@ async def _thread_reply(inbound: ChannelInbound, adapter, text: str, *,
             subject=subject or f"Re: {inbound.subject}", text=text, html=html, cc=cc))
 
 
-async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> dict:
+async def _start_run(project: Project, brand: str, inbound: ChannelInbound,
+                     adapter=None) -> dict:
     """Create a session for the brand and launch the pipeline on the origin channel,
-    so both human gates come back to wherever the request arrived."""
+    so both human gates come back to wherever the request arrived. The receipt is sent
+    BEFORE the pipeline spawns, so it always precedes the Stage 1 Plan email (never the
+    out-of-order 'preparing the plan' after the plan already arrived)."""
     from app.agents.competitor_agent import ensure_industry, resolve_competitors
     from app.db.models import GeneratedQuery
     from app.orchestration.run_manager import get_run_manager
@@ -478,6 +481,16 @@ async def _start_run(project: Project, brand: str, inbound: ChannelInbound) -> d
 
     # Cc from the trigger (header) + any "cc: a@x, b@y" the user typed — kept for the task
     cc = _merge_cc(getattr(inbound, "cc", []), _parse_cc(inbound.text))
+    # Receipt FIRST (awaited) so it lands before the Stage 1 Plan the pipeline sends next —
+    # no more 'preparing the plan' arriving after the plan already did.
+    if adapter is not None:
+        logos = await _ack_logos(str(project.id), [brand, *competitors])
+        await _thread_reply(
+            inbound, adapter, brand=brand, brands_logos=logos,
+            subject=f"[{task_id}] {brand} Monitoring",
+            text=(f"Received — Task {task_id} created for {brand}. Your monitoring plan "
+                  "follows in this thread just below; review it and reply APPROVE to begin. "
+                  f"Nothing runs until you approve each stage. Keep [{task_id}] in the subject."))
     run_id = await get_run_manager().start(
         graph_name="pipeline",
         input_state={"project_id": str(project.id), "session_id": sid,
@@ -531,17 +544,9 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
     intent = await _classify(inbound, has_pending_gate=run is not None)
 
     if intent.kind == "start_run" and run is None:
-        result = await _start_run(project, intent.brand, inbound)
-        tid = result["task_id"]
-        logos = await _ack_logos(result.get("project_id", project_id),
-                                 [intent.brand, *result.get("competitors", [])])
-        await _thread_reply(
-            inbound, adapter, subject=f"[{tid}] {intent.brand} Monitoring",
-            brand=intent.brand, brands_logos=logos,
-            text=(f"Task {tid} started for {intent.brand}. I'm preparing the monitoring "
-                  "plan and will email it here for your review shortly — reply APPROVE to "
-                  "begin collection. Nothing runs until you approve each stage. "
-                  f"Keep [{tid}] in the subject on any reply."))
+        # _start_run sends the receipt (awaited) before spawning the pipeline, so the
+        # receipt always precedes the Stage 1 Plan email.
+        result = await _start_run(project, intent.brand, inbound, adapter=adapter)
         return {"handled": True, "action": "start_run", **result}
 
     if intent.kind == "gate_decision" and run is not None:

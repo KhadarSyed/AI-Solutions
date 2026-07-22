@@ -157,15 +157,17 @@ async def plan_gate(state: PipelineState) -> dict:
             intent=intent, goal=goal, boolean_queries=queries)
         html += _ref_footer(token)
         await notify_stage(state, stage_key="plan", html=html, message=(
-            f"Monitoring begins for {brand}. Review the plan and reply APPROVE to start "
-            f"collecting, or 'change: …' to adjust. Reference: {token}"))
+            f"Here's the monitoring plan for {brand}. Review it and reply APPROVE to begin "
+            f"collection, or 'change: …' to adjust. Nothing runs until you approve. "
+            f"Reference: {token}"))
 
     decision = _gate({"gate": 0, "kind": "approve_plan",
                       "channel": state.get("origin_channel"), "brand": brand})
     if decision.get("decision") == "approved":
         await _agent(state, "WebSearch", "started",
-                     f"Plan approved — WebSearch started for {brand} + {len(competitors)} "
-                     f"competitors across {label}.")
+                     f"Plan approved — now collecting coverage for {brand} + "
+                     f"{len(competitors)} competitors ({label}). I'll email the collected "
+                     "set here for your review next.")
         return {"plan_decision": "approved"}
     with contextlib.suppress(Exception):
         await _apply_plan_changes(session_id, decision.get("feedback", ""))
@@ -332,8 +334,9 @@ async def tag(state: PipelineState) -> dict:
     from app.services.tagging_service import tag_session
 
     await _agent(state, "Tagging", "started",
-                 f"Tagging {state.get('unique_count', 0)} articles: sentiment "
-                 "(+confidence & reason), theme tiers, emotions, signals, entities, section.")
+                 f"Collection approved — now tagging {state.get('unique_count', 0)} articles: "
+                 "sentiment (+confidence & reason), theme tiers, emotions, signals, entities, "
+                 "section. I'll email the tagged set here for your review next.")
     await _progress(state, "🏷️ Tagging articles…")
     stats = await tag_session(session_id=state["session_id"], project_id=state["project_id"])
     return {
@@ -413,8 +416,8 @@ async def dashboards(state: PipelineState) -> dict:
     from app.services.dashboard_service import build_dashboards
 
     await _agent(state, "Dashboard", "started",
-                 "Approved — building your dashboards, per-chart insights and the "
-                 "branded report now.")
+                 "Tagging approved — now building your dashboard, per-chart insights and the "
+                 "branded report. The final report will arrive here shortly.")
     await _progress(state, "📊 Building the dashboard and branded report…")
     payload = await build_dashboards(session_id=state["session_id"], force=True)
 

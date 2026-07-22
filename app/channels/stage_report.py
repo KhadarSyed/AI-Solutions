@@ -307,10 +307,11 @@ def plan_html(task_id, brand, stats, *, brands_logos, duration, intent, goal,
         + _cta([("approve", "start collecting coverage now"),
                 ("change: …", "e.g. 'change: add competitor Carrier', 'change: last 14 days'"),
                 ]))
-    return _shell(task_id, brand, 0, "Stage 1 · Plan — review & approve",
-                  f"Monitoring begins for {brand}. Here's the plan — review and approve, "
-                  "or tell me what to change.", body,
-                  preheader=f"Plan ready for {brand} — approve or request changes.")
+    return _shell(task_id, brand, 0, "Stage 1 of 3 · Plan — review & approve",
+                  f"Here's the plan for {brand} — review and reply APPROVE to begin "
+                  "collection, or tell me what to change. Nothing runs until you approve.",
+                  body,
+                  preheader=f"Plan ready for {brand} — approve to begin, or request changes.")
 
 
 def collection_kpi_html(task_id, brand, stats, *, tagging_sources, enrichment_points) -> str:
