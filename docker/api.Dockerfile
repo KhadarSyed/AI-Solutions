@@ -24,6 +24,16 @@ RUN uv sync --frozen --no-dev --no-install-project
 # Chromium for the enrichment agent (About/Contact page navigation)
 RUN playwright install --with-deps chromium
 
+# Node.js (NodeSource 20 LTS) + Browser MCP agent (@playwright/mcp) for the Google Search
+# connector — navigates the date-filtered SERP and works through consent/cookie/selection
+# dialogs. Installs the Node-side Chromium into the shared PLAYWRIGHT_BROWSERS_PATH.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x -o /tmp/ns.sh && bash /tmp/ns.sh \
+    && apt-get install -y --no-install-recommends nodejs \
+    && npm install -g @playwright/mcp@latest playwright \
+    && npx playwright install chromium \
+    && npm cache clean --force \
+    && rm -rf /var/lib/apt/lists/* /tmp/ns.sh
+
 COPY . .
 
 EXPOSE 8002

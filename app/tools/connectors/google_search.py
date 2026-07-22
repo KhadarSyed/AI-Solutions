@@ -31,6 +31,9 @@ _SKIP_HOSTS = ("google.", "youtube.com", "webcache.googleusercontent")
 _RESULT_RE = re.compile(r'<a href="(/url\?[^"]+|https?://[^"]+)"[^>]*>(?:(?!</a>).)*?<h3[^>]*>(.*?)</h3>',
                         re.I | re.S)
 _TAG_RE = re.compile(r"<[^>]+>")
+# Browser-MCP snapshot shapes: markdown [Title](url) and a11y  link "Title" … url
+_MD_LINK_RE = re.compile(r'\[([^\]\n]{3,200})\]\((https?://[^)\s]+)\)')
+_A11Y_LINK_RE = re.compile(r'"([^"\n]{3,200})"[^\n]{0,80}?((?:https?://|/url\?)\S+)')
 
 
 def _cdr_url(query: str, days_back: int) -> str:
@@ -51,17 +54,23 @@ def _real_url(href: str) -> str:
 
 
 def _parse_serp(html: str, query: str, group: str = "") -> list[RawArticle]:
+    """Parse result (title, url) pairs from raw SERP HTML (Playwright/Scrapling) OR from a
+    Browser-MCP accessibility/markdown snapshot."""
+    html = html or ""
+    pairs = [(m.group(1), m.group(2)) for m in _RESULT_RE.finditer(html)]
+    if not pairs:   # snapshot fallback: markdown links [Title](url) or a11y link "Title" url
+        pairs = ([(u, t) for t, u in _MD_LINK_RE.findall(html)]
+                 + [(u, t) for t, u in _A11Y_LINK_RE.findall(html)])
     out: list[RawArticle] = []
     seen: set[str] = set()
-    for m in _RESULT_RE.finditer(html or ""):
-        url = _real_url(m.group(1).strip())
+    for href, title in pairs:
+        url = _real_url(str(href).strip())
         host = urlparse(url).netloc.removeprefix("www.")
-        if not url.startswith("http") or any(s in host for s in _SKIP_HOSTS) or url in seen:
+        title = re.sub(r"\s+", " ", _TAG_RE.sub("", str(title))).strip()
+        if (not url.startswith("http") or not title or url in seen
+                or any(s in host for s in _SKIP_HOSTS)):
             continue
         seen.add(url)
-        title = re.sub(r"\s+", " ", _TAG_RE.sub("", m.group(2))).strip()
-        if not title:
-            continue
         out.append(RawArticle(
             publisher_name=host, title=title, content="", publisher_domain=host, url=url,
             language="en", source="google_search", query_group=group, original_query=query))
@@ -96,29 +105,29 @@ async def _browser_html(url: str) -> str:
     return ""
 
 
-async def _fetch_serp(url: str) -> str:
-    """Layered fetch of a date-filtered Google SERP:
-    1. Browser MCP agent (if enabled) — the @agent360 agent can work through consent / cookie
-       selection interstitials. Needs Node.js (npx); falls through when unavailable.
+async def _collect(url: str, query: str, limit: int) -> list[RawArticle]:
+    """Layered fetch+parse of a date-filtered Google SERP — return the FIRST layer that
+    actually yields results, so an unparseable/blocked response falls through:
+    1. Browser MCP agent (if enabled) — works through consent / cookie selection dialogs.
     2. Playwright / real Chromium — dismisses the consent wall via a button click.
     3. Scrapling browser-impersonated fetch.
-    NOTE: none of these reliably solves a hard CAPTCHA ('select all…'); consent/selection
-    dialogs are handled, an actual challenge yields nothing (best-effort source)."""
+    NOTE: none reliably solves a hard CAPTCHA; consent/selection dialogs are handled, an
+    actual challenge yields nothing (best-effort source)."""
     from app.tools.scraping import browser_mcp
 
     if browser_mcp.enabled():
         with contextlib.suppress(Exception):
-            snap = await browser_mcp.navigate_and_read(url)
-            if snap and ("<h3" in snap or "/url?q=" in snap or "http" in snap):
-                return snap
-    html = await _browser_html(url)                       # real Chromium
-    if html and "<h3" in html:
-        return html
+            arts = _parse_serp(await browser_mcp.navigate_and_read(url), query)
+            if arts:
+                return arts[:limit]
+    arts = _parse_serp(await _browser_html(url), query)   # real Chromium
+    if arts:
+        return arts[:limit]
     with contextlib.suppress(Exception):                  # Scrapling impersonated fetch
         from app.tools.scraping.fetcher import fetch_html
 
-        html = await fetch_html(url, timeout=20, impersonate=True) or html
-    return html or ""
+        arts = _parse_serp(await fetch_html(url, timeout=20, impersonate=True), query)
+    return arts[:limit]
 
 
 class GoogleSearchConnector(Connector):
@@ -136,9 +145,7 @@ class GoogleSearchConnector(Connector):
 
         async def one(query: str) -> None:
             async with sem:
-                url = _cdr_url(query, days)
-                html = await _fetch_serp(url)
-            arts = _parse_serp(html, query)[: filters.max_results]
+                arts = await _collect(_cdr_url(query, days), query, filters.max_results)
             if not arts:
                 result.errors.append(f"{self.name}:{query}: no results (blocked/empty)")
             result.articles.extend(arts)
