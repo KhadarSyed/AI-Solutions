@@ -16,6 +16,7 @@ from app.observability.logging import get_logger
 from app.tools.connectors.base import Connector, RawArticle, SearchFilters
 from app.tools.connectors.ddg import DuckDuckGoConnector
 from app.tools.connectors.google_news_rss import GoogleNewsRSSConnector
+from app.tools.connectors.google_search import GoogleSearchConnector
 from app.tools.connectors.keyed import (
     ApifyConnector,
     SerpApiConnector,
@@ -28,6 +29,7 @@ log = get_logger(__name__)
 
 ALL_CONNECTORS: list[Connector] = [
     GoogleNewsRSSConnector(),
+    GoogleSearchConnector(),
     SearxngConnector(),
     DuckDuckGoConnector(),
     SerpApiConnector(),

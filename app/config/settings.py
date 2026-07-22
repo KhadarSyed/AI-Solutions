@@ -76,6 +76,9 @@ class Settings(BaseSettings):
     logfire_token: str = ""
 
     # Connectors (empty key = connector disabled)
+    # Google Web Search with native custom date range (Playwright → Scrapling fallback).
+    # Best-effort — Google throttles automated search; the ingestion date cut is the guarantee.
+    google_search_enabled: bool = True
     searxng_url: str = "http://localhost:8083"
     serpapi_api_key: str = ""
     tavily_api_key: str = ""
