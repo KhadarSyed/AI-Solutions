@@ -172,9 +172,30 @@ async def notify_agent(state: PipelineState, agent: str, phase: str, message: st
                                              text=text, html=html))
 
 
+def _downloads_block(links: list[tuple[str, str]]) -> str:
+    """A styled 'Downloads' section (buttons) appended to an email body when files are
+    delivered as OneDrive links instead of attachments."""
+    from html import escape
+
+    btns = "".join(
+        f'<a href="{escape(url, quote=True)}" target="_blank" rel="noopener" '
+        f'style="display:inline-block;margin:6px 8px 0 0;padding:10px 16px;background:#b5462f;'
+        f'color:#fff;text-decoration:none;border-radius:9px;font-size:13px;font-weight:600">'
+        f'⬇ {escape(name)}</a>' for name, url in links)
+    return (
+        '<div style="margin-top:16px;padding-top:12px;border-top:1px solid #ece7df">'
+        '<div style="font-size:11px;text-transform:uppercase;letter-spacing:.08em;'
+        'color:#6b6b70;font-weight:700;margin-bottom:4px">Downloads</div>'
+        f'{btns}<div style="font-size:11px;color:#9aa2ad;margin-top:8px">Links open the file '
+        'directly (no attachment, so your mail security passes them through).</div></div>'
+    )
+
+
 async def _deliver(state: PipelineState, event: str, message: str,
                    attachments: list[tuple[str, bytes, str]], subject: str,
                    html: str = "") -> None:
+    import contextlib
+
     channel = state.get("origin_channel", "web")
     run_id = state.get("run_id")
     if run_id:
@@ -187,10 +208,26 @@ async def _deliver(state: PipelineState, event: str, message: str,
         log.info("notifier.no_adapter", channel=channel)  # web/scheduler: stream only
         return
     cc = await _task_cc(state)
+    # The corporate mail gateway quarantines attachments (Stage 1 with none arrives; Stage 2/3
+    # with CSVs get held). So for email, upload each file to OneDrive and DELIVER LINKS in the
+    # body instead — no attachment. Anything that fails to upload stays attached (don't drop it).
+    send_attachments = attachments
+    if channel == "email" and attachments and hasattr(adapter, "share_link"):
+        links: list[tuple[str, str]] = []
+        kept: list[tuple[str, bytes, str]] = []
+        for name, data, mime in attachments:
+            url = ""
+            with contextlib.suppress(Exception):
+                url = await adapter.share_link(name, data, mime)
+            (links.append((name, url)) if url else kept.append((name, data, mime)))
+        if links:
+            html = (html or "") + _downloads_block(links)
+            message = message + "\n\nDownloads:\n" + "\n".join(f"• {n}: {u}" for n, u in links)
+        send_attachments = kept
     await _send_threaded(
         state, adapter,
-        OutboundMessage(subject=subject, text=message, html=html, attachments=attachments,
-                        cc=cc),
+        OutboundMessage(subject=subject, text=message, html=html,
+                        attachments=send_attachments, cc=cc),
     )
 
 

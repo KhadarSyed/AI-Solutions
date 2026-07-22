@@ -249,6 +249,27 @@ class TeamsMcpAdapter(ChannelAdapter):
             log.warning("teams.drive_upload_failed", name=name, error=_unwrap(exc)[:200])
         return None
 
+    async def share_link(self, name: str, data: bytes,
+                         mime: str = "application/octet-stream") -> str:
+        """Upload bytes to OneDrive and return an anonymous view/download link. Used INSTEAD
+        of attaching files: the corporate gateway quarantines attachments but delivers links,
+        so stage CSVs / the dashboard HTML / the report reach the inbox as download links."""
+        import json as _json
+
+        with contextlib.suppress(Exception):
+            item = await self._upload_to_drive(name, data)
+            if item and item.get("itemId"):
+                args = {"itemId": item["itemId"], "type": "view", "scope": "anonymous"}
+                if item.get("driveId"):
+                    args["driveId"] = item["driveId"]
+                out = await self._call("drive_item_create_link", args, read_timeout=60.0)
+                url = (_json.loads(out.get("text", "{}")) or {}).get("webUrl", "")
+                if url:
+                    log.info("teams.share_link", name=name, bytes=len(data))
+                    return url
+        log.info("teams.share_link_failed", name=name)
+        return ""
+
     async def _upload_attachments(self, attachments) -> list[tuple[str, str]]:
         links: list[tuple[str, str]] = []
         for name, data, _mime in attachments:
