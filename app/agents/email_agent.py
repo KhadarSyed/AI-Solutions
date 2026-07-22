@@ -522,16 +522,20 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
             log.info("inbound.unverified", sender=inbound.sender)
             return {"handled": False, "reason": "sender is not a registered stakeholder"}
 
-    # subject gating — never act on arbitrary inbox mail (email channel only)
-    if inbound.channel == "email" and not subject_allowed(inbound.subject, await _all_brands()):
-        log.info("inbound.subject_unmatched", subject=(inbound.subject or "")[:80])
-        return {"handled": False, "reason": "subject not recognized for this system"}
     project_id = str(project.id)
 
     from app.orchestration.task_id import extract_task_id
 
     tid = extract_task_id(inbound.subject) or extract_task_id(inbound.text)
     run = await _pending_gate_run(project_id, task_id=tid)
+    # Subject gating guards against acting on arbitrary inbox mail — but ONLY when there is no
+    # pending gate. A reply to a pending gate from a verified stakeholder is legitimate even
+    # with an empty/odd subject (some inbound sources drop the subject on replies); the per-run
+    # token check downstream is what authorizes a gate decision, not the subject line.
+    if run is None and inbound.channel == "email" and not subject_allowed(
+            inbound.subject, await _all_brands()):
+        log.info("inbound.subject_unmatched", subject=(inbound.subject or "")[:80])
+        return {"handled": False, "reason": "subject not recognized for this system"}
     adapter = await _adapter_for(inbound.channel)
     # For a pending-gate reply, the mailbox scan's short preview lacks the user's actual text
     # (behind the security banner) and the RT- token (in the quoted original). Fetch the full
