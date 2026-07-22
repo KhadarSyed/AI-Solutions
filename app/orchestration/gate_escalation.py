@@ -24,6 +24,8 @@ from app.observability.logging import get_logger
 log = get_logger(__name__)
 
 SWEEP_SECONDS = 60
+# gate index → user-facing stage name (reminders read "Stage 3 · Tagged", not "the 2 gate")
+_GATE_STAGE = {0: "Stage 1 · Plan", 1: "Stage 2 · Collection KPIs", 2: "Stage 3 · Tagged Results"}
 
 
 async def _brand_for(session_id) -> str:
@@ -58,12 +60,12 @@ async def _remind(run: Run, brand: str, n: int, of: int) -> None:
     if adapter is None:                       # web/scheduler origin — stream only, nothing to email
         return
     state = _state_from_run(run, brand)
-    gate = (run.awaiting_input or {}).get("stage") or (run.awaiting_input or {}).get("gate") \
-        or "review"
+    # user-facing stage name, not the internal gate index ("the 2 gate")
+    stage = _GATE_STAGE.get((run.awaiting_input or {}).get("gate"), "the pending review")
     token = resume_token(str(run.id))
     tid = state.get("task_id") or ""
     text = (f"⏰ Reminder {n} of {of}: task {tid} ({brand}) is waiting for your approval at "
-            f"the {gate} gate. Reply APPROVE in this thread to continue (or reply with changes). "
+            f"{stage}. Reply APPROVE in this thread to continue (or reply with changes). "
             f"Reference {token}. If I don't hear back, I'll pause this task and move on.")
     with contextlib.suppress(Exception):
         await _send_threaded(state, adapter, OutboundMessage(
