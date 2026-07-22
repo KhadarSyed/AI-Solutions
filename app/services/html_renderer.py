@@ -508,29 +508,30 @@ function __dailyInit(CFG){
   var API=(CFG.api_base||window.location.origin).replace(/\/$/,'');
   var main=document.getElementById('dm-main'), secs=document.getElementById('dm-secs');
   var dragEl=null;
-  // section sidebar filter
+  // section select + date + text filters all compose into one pass
+  var activeSec='__all';
   secs.addEventListener('click',function(e){
     var li=e.target.closest('li'); if(!li)return;
     secs.querySelectorAll('li').forEach(function(x){x.classList.remove('on');});
-    li.classList.add('on'); var sec=li.getAttribute('data-sec');
-    main.querySelectorAll('.dm-sec').forEach(function(s){
-      s.style.display=(sec==='__all'||s.getAttribute('data-sec')===sec)?'':'none';});
+    li.classList.add('on'); activeSec=li.getAttribute('data-sec'); apply();
   });
-  // date + text filter
-  function flt(){
+  function apply(){
     var f=(document.getElementById('dm-from')||{}).value||'';
     var t=(document.getElementById('dm-to')||{}).value||'';
-    var q=((document.getElementById('dm-q')||{}).value||'').toLowerCase();
+    var q=((document.getElementById('dm-q')||{}).value||'').toLowerCase().trim();
     main.querySelectorAll('.dm-sec').forEach(function(s){
-      var vis=0;
+      var secSel=(activeSec==='__all'||s.getAttribute('data-sec')===activeSec), vis=0;
       s.querySelectorAll('.dm-art').forEach(function(a){
         var d=a.getAttribute('data-date')||'',x=a.getAttribute('data-text')||'',ok=true;
-        if(f&&d<f)ok=false; if(t&&d>t)ok=false; if(q&&x.indexOf(q)<0)ok=false;
+        if(f&&d&&d<f)ok=false;            // undated (d==='') is never excluded by a bound
+        if(t&&d&&d>t)ok=false;
+        if(q&&x.indexOf(q)<0)ok=false;
         a.style.display=ok?'':'none'; if(ok)vis++;});
+      s.style.display=(secSel&&vis>0)?'':'none';   // hide deselected or now-empty sections
     });
   }
   ['dm-from','dm-to','dm-q'].forEach(function(id){var el=document.getElementById(id);
-    if(el)el.addEventListener('input',flt);});
+    if(el)el.addEventListener('input',apply);});
   // drag to move between sections (persists via the review API)
   main.addEventListener('dragstart',function(e){
     var a=e.target.closest('.dm-art'); if(!a)return; dragEl=a; a.classList.add('drag');
@@ -547,7 +548,7 @@ function __dailyInit(CFG){
     var from=dragEl.closest('.dm-sec'), toSec=drop.getAttribute('data-sec');
     if(from&&from.getAttribute('data-sec')===toSec)return;
     drop.appendChild(dragEl);
-    recount();
+    recount(); apply();
     var id=dragEl.getAttribute('data-id'), note=document.createElement('span');
     note.className='dm-save'; note.textContent='saving…';
     (dragEl.querySelector('.dm-title-row')||dragEl.querySelector('.dm-title')).appendChild(note);
