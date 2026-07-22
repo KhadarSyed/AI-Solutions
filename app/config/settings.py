@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     cc_stack_email: str = ""
     # brand → official domain overrides for logo resolution (JSON, e.g. {"BeOne":"beonemedicines.com"})
     brand_domains: str = ""
+    # Exact hosted logo image for the email signature (a raster URL that renders in Outlook —
+    # e.g. right-click the logo in your org signature → "Copy image address"). Empty → the
+    # InfoVision favicon is used as a safe fallback. SVG will NOT render in Outlook email.
+    signature_logo_url: str = ""
     pexels_api_key: str = ""
 
     # LLM — claude primary, Azure OpenAI is the fallback; per-stage overrides

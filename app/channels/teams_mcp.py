@@ -9,6 +9,7 @@ adapter tolerates server-side renames."""
 import asyncio
 import contextlib
 from collections.abc import AsyncIterator
+from datetime import UTC
 
 from app.channels.base import ChannelAdapter, ChannelInbound, OutboundMessage
 from app.config.settings import get_settings
@@ -303,30 +304,60 @@ class TeamsMcpAdapter(ChannelAdapter):
             await self._call("renew_subscriptions", {})
 
     async def poll_inbound(self) -> AsyncIterator[ChannelInbound]:
-        try:
-            res = await self._call("get_pending_mentions", {})
-        except Exception as exc:
-            log.info("teams.poll_failed", error=_unwrap(exc)[:300])
-            return
+        # 1. mention subscription (Teams @-mentions + keyword emails, when the webhook fired)
         import json
 
-        raw = res.get("text", "[]")
-        try:
-            data = json.loads(raw)
-        except Exception:
-            return
-        # server returns a bare list OR {"mentions": [...], "note": ...}
-        mentions = data.get("mentions", []) if isinstance(data, dict) else data
-        if not isinstance(mentions, list):
-            mentions = []
-        if mentions:
-            log.info("teams.poll", mentions=len(mentions), sample=str(raw)[:300])
-        for m in mentions:
-            inbound = self._to_inbound(m)
-            if inbound is not None:
-                yield inbound
-            # NB: do NOT mark processed here — the router calls ack_inbound() only after a
-            # definitive outcome, so a mention handled during a teams-mcp/DB blip retries.
+        with contextlib.suppress(Exception):
+            res = await self._call("get_pending_mentions", {})
+            data = json.loads(res.get("text", "[]") or "[]")
+            mentions = data.get("mentions", []) if isinstance(data, dict) else data
+            if not isinstance(mentions, list):
+                mentions = []
+            if mentions:
+                log.info("teams.poll", mentions=len(mentions), sample=str(mentions)[:200])
+            for m in mentions:
+                inbound = self._to_inbound(m)
+                if inbound is not None:
+                    yield inbound
+                # NB: ack only via ack_inbound() after a definitive outcome, so a mention
+                # handled during a teams-mcp/DB blip retries next poll.
+
+        # 2. direct mailbox scan — the subscription misses emails that arrive while its
+        # webhook is lapsed/cold, so also read recent inbox mail and let the router filter
+        # (subject gating + stakeholder auth) + dedupe. This is what makes email triggers
+        # reliable regardless of subscription state.
+        for inbound in await self._poll_mail():
+            yield inbound
+
+    async def _poll_mail(self) -> list[ChannelInbound]:
+        """Recent inbox emails (last ~30 min) as candidate triggers. The router applies
+        subject gating, stakeholder/domain auth, and dedupe — so scanning broadly is safe."""
+        import json
+        from datetime import datetime, timedelta
+
+        out: list[ChannelInbound] = []
+        with contextlib.suppress(Exception):
+            res = await self._call("mail_list", {"top": 15})
+            items = json.loads(res.get("text", "[]") or "[]")
+            if isinstance(items, dict):
+                items = items.get("value") or items.get("messages") or items.get("mail") or []
+            cutoff = datetime.now(UTC) - timedelta(minutes=30)
+            for m in items or []:
+                mid = m.get("id") or m.get("message_id") or ""
+                if not mid:
+                    continue
+                recv = m.get("receivedDateTime") or m.get("received") or ""
+                with contextlib.suppress(Exception):
+                    if datetime.fromisoformat(recv.replace("Z", "+00:00")) < cutoff:
+                        continue
+                sender = (m.get("from") or m.get("sender_email") or m.get("sender") or "")
+                subject = m.get("subject", "") or ""
+                body = _clean_text(m.get("preview") or m.get("bodyPreview") or m.get("body", ""))
+                out.append(ChannelInbound(
+                    channel="email", sender=sender, text=body, subject=subject,
+                    thread_ref=mid, raw_id=mid,
+                    address={"kind": "email", "to": sender, "message_id": mid}))
+        return out
 
     async def ack_inbound(self, raw_id: str) -> None:
         if not raw_id:

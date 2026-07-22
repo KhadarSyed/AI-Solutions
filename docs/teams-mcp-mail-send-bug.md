@@ -64,3 +64,27 @@ mail_send {to:"<your address>", subject:"send test", body:"ok", contentType:"Tex
 
 Once this returns a real id, the PR Intelligence agent's email delivery (threaded replies +
 CC) will work end-to-end with no changes on the agent side.
+
+---
+
+# Follow-up: `mail_reply` has no `cc` parameter (CC dropped on threaded replies)
+
+**Status:** send is fixed (above) and delivering ✅. New issue: **CC recipients are not
+applied to threaded replies.**
+
+**Root cause:** `mail_reply`'s input schema exposes only
+`{mailbox, messageId, comment, replyAll, attachments, attachItems}` — **no `cc` / `ccRecipients`.**
+`mail_send` has `cc`, but `mail_reply` does not. The agent threads every stage update with
+`mail_reply` (to keep one conversation), and passes `cc: [...]` — which the tool silently
+drops. So the stakeholder CC list (e.g. Harish, Anuran) never lands on the replies.
+
+**Options:**
+1. **Preferred — add `cc` (and ideally `to`) to `mail_reply`.** Under the hood this is Graph
+   `createReply` → set `ccRecipients` on the draft → `send`, instead of the one-shot
+   `/reply` (which can't carry cc). Then threaded replies carry CC with zero agent change.
+2. If `mail_reply` can't take cc, the agent will fall back to seeding the thread with a
+   `mail_send` (cc supported) and `replyAll` thereafter — but that puts the exchange in the
+   agent's own thread rather than nested under the user's trigger, so option 1 is cleaner.
+
+**Verify:** `mail_reply {messageId, comment, cc:["someone@x.com"]}` → the sent reply shows
+the cc recipient.

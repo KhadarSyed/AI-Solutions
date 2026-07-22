@@ -149,6 +149,38 @@ def _logo_row(brands) -> str:
             f"{''.join(cells)}</tr></table>")
 
 
+# InfoVision Intelligence signature — hardcoded brand footer on every agent email.
+# Logo via the favicon service (email-safe remote image); swap _SIG_LOGO for a hosted
+# asset URL (or app/static path served over public_api_base) to use the exact brand image.
+_SIG_LOGO = "https://www.google.com/s2/favicons?domain=infovision.com&sz=128"
+_SIG_SITE = "https://www.infovision.com"
+
+
+def _signature_html() -> str:
+    import contextlib
+
+    logo = _SIG_LOGO
+    with contextlib.suppress(Exception):
+        from app.config.settings import get_settings
+
+        logo = get_settings().signature_logo_url or _SIG_LOGO
+    return (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" '
+        f'style="margin-top:18px;border-top:1px solid {_BORDER};padding-top:14px"><tr>'
+        f'<td valign="middle" style="padding-right:12px">'
+        f'<img src="{_esc(logo)}" alt="InfoVision" height="38" '
+        f'style="border-radius:8px;display:block;max-height:44px"></td>'
+        f'<td valign="middle">'
+        f'<div style="font-family:{_SERIF};font-size:15px;color:{_INK};line-height:1.2">'
+        f'InfoVision Intelligence</div>'
+        f'<div style="font-size:12px;font-weight:700;color:{_ACCENT};margin:2px 0">'
+        f'#AccelerateDigital</div>'
+        f'<div style="font-size:11px;color:{_MUTED}">DIGI7 &middot; INVISINET &middot; '
+        f'VCOLLAB &middot; <a href="{_SIG_SITE}" style="color:{_MUTED}">www.infovision.com</a>'
+        f'</div></td></tr></table>'
+    )
+
+
 def _cta(options) -> str:
     """options: [(bold_label, description)] — the single 'what to reply' box."""
     items = "".join(
@@ -191,7 +223,7 @@ def _shell(task_id: str, brand: str, active_step: int, phase: str, subtitle: str
         f"{_esc(brand)} Monitoring</h1>"
         f'<p style="color:{_MUTED};font-size:14px;margin:0 0 8px;line-height:1.5">'
         f"{_esc(subtitle)}</p>"
-        f"{body}{footer}"
+        f"{body}{footer}{_signature_html()}"
         f'<div style="color:#a7a19a;font-size:11px;margin-top:16px">PR Intelligence Agent · '
         f"replies stay in this thread · this step stays open until you reply.</div>"
         f"</td></tr></table></td></tr></table></div>"
@@ -216,7 +248,7 @@ def status_html(task_id, brand, agent, phase, message, *, icon: str = "") -> str
         f'<div style="font-family:{_SERIF};font-size:15px;color:{_INK};margin:0 0 4px">'
         f'{_esc(icon)} {_esc(agent)} Agent — {_esc(phase)}</div>'
         f'<div style="font-size:13px;color:{_MUTED};line-height:1.55">{_esc(message)}</div>'
-        f'</div>'
+        f'</div>{_signature_html()}'
         f'<div style="color:#a7a19a;font-size:11px;margin-top:12px">PR Intelligence Agent · '
         f'replies stay in this thread.</div>'
         f'</td></tr></table></td></tr></table></div>'
@@ -240,7 +272,7 @@ def ack_html(task_id, brand, message, *, brands_logos=None) -> str:
         f'<div style="background:{_CARD};border:1px solid {_BORDER};border-left:3px solid '
         f'{_ACCENT};border-radius:12px;padding:16px;margin-top:10px">'
         f'<div style="font-size:14px;color:{_INK};line-height:1.6">{_esc(message)}</div>'
-        f'</div>{scope}'
+        f'</div>{scope}{_signature_html()}'
         f'<div style="color:#a7a19a;font-size:11px;margin-top:12px">PR Intelligence Agent · '
         f'replies stay in this thread.</div>'
         f'</td></tr></table></td></tr></table></div>'
