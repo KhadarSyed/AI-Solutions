@@ -217,6 +217,8 @@ def _new_reply_only(text: str) -> str:
     gate email contains its own 'change: …' example and the RT- token, which would otherwise
     mis-classify the reply or leak into intent detection — so classification must see only
     what the user actually typed."""
+    from app.channels.teams_mcp import _clean_text
+
     t = _clean_text(text or "")
     m = _QUOTE_RE.search(t)
     return (t[: m.start()] if m else t).strip()
