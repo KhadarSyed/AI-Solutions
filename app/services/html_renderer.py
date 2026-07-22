@@ -357,10 +357,39 @@ a.dm-title::after{content:"\2197";font-size:11px;color:var(--muted);margin-left:
 .dm-sent-pos{background:#e5f4ec;color:#16794b}
 .dm-sent-neg{background:#fde7e1;color:#b5462f}
 .dm-sent-neu{background:#eef0f2;color:#6b7280}
-.dm-syn{font-size:11px;font-weight:600;color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);
+.dm-syn,.dm-sim{font-size:11px;font-weight:600;color:var(--accent);background:color-mix(in srgb,var(--accent) 8%,transparent);
   border:1px solid color-mix(in srgb,var(--accent) 25%,transparent);border-radius:20px;padding:2px 10px;
   cursor:pointer;font-family:inherit}
-.dm-syn:hover{background:color-mix(in srgb,var(--accent) 15%,transparent)}
+.dm-syn:hover,.dm-sim:hover{background:color-mix(in srgb,var(--accent) 15%,transparent)}
+/* syndication / similar popup */
+.dm-modal{position:fixed;inset:0;z-index:2000;display:flex;align-items:center;justify-content:center}
+.dm-modal[hidden]{display:none}
+.dm-modal-back{position:absolute;inset:0;background:rgba(2,6,23,.55);backdrop-filter:blur(3px)}
+.dm-modal-card{position:relative;z-index:1;width:min(580px,92vw);max-height:82vh;overflow:auto;
+  background:var(--card);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow-lift);
+  animation:fade .25s ease both}
+.dm-modal-head{display:flex;align-items:center;gap:10px;padding:18px 22px 14px;
+  border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--card);z-index:1}
+.dm-modal-head h4{margin:0;font-family:var(--font-display);font-size:17px;flex:1;color:var(--ink)}
+.dm-modal-x{border:0;background:transparent;color:var(--ink2);font-size:24px;cursor:pointer;line-height:1}
+.dm-modal-x:hover{color:var(--ink)}
+.dm-modal-body{padding:8px 22px 22px}
+.dm-synrow{display:flex;align-items:center;gap:10px;padding:11px 0;border-top:1px solid var(--line)}
+.dm-synrow:first-child{border-top:0}
+.dm-synrow img{border-radius:3px;flex-shrink:0}
+.dm-synrow a{color:var(--ink);text-decoration:none;font-weight:600;font-size:13.5px;word-break:break-word}
+.dm-synrow a:hover{color:var(--accent);text-decoration:underline}
+.dm-synrow .d{color:var(--muted);font-size:12px;margin-left:auto;flex-shrink:0}
+.dm-simcard{border:1px solid var(--line);border-radius:14px;padding:13px 15px;margin-top:11px;
+  background:var(--card2)}
+.dm-simcard:first-child{margin-top:2px}
+.dm-simcard .t{font-weight:600;font-size:13.5px;color:var(--ink);text-decoration:none;display:block;line-height:1.4}
+.dm-simcard a.t:hover{color:var(--accent);text-decoration:underline}
+.dm-simcard .m{font-size:11.5px;color:var(--muted);margin-top:5px;display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.dm-why{display:inline-block;font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;
+  border-radius:6px;padding:2px 7px;background:color-mix(in srgb,var(--accent) 13%,transparent);color:var(--accent)}
+.dm-why.crisis{background:#fde7e1;color:#b5462f}
+.dm-empty{color:var(--muted);font-size:13px;padding:10px 0}
 </style>"""
 
 
@@ -418,10 +447,14 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
             bits.append(_e(country.upper()))
         bits.append(when)
         meta = " · ".join(bits) + reach_s
-        # syndication count badge (Phase 2 turns this into a popup)
+        # syndication count badge → popup listing the republished copies
         syn = [u for u in (r.get("syndicated") or []) if u]
         syn_badge = (f'<button class="dm-syn" data-urls="{_e("|".join(syn))}" type="button">'
                      f'&#128279; {len(syn)} syndicated</button>' if syn else "")
+        # similar-articles badge → popup (data lives in the SIM map, keyed by article id)
+        sim = r.get("similar") or []
+        sim_badge = (f'<button class="dm-sim" data-id="{_e(r.get("id",""))}" type="button">'
+                     f'&#128279; {len(sim)} similar</button>' if sim else "")
         search = _e(" ".join(str(r.get(k, "")) for k in
                     ("title", "publisher", "author", "country", "summary",
                      "theme", "emotions", "signals")).lower())
@@ -438,7 +471,7 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
             f'<div style="flex:1"><div class="dm-title-row">{title_html}{badge}{sent_pill}</div>'
             f'<div class="dm-meta">{meta}</div>'
             f'<div class="dm-snip">{_e(r.get("summary", ""))}</div>'
-            f'<div class="dm-tags">{tags}{syn_badge}</div></div></article>')
+            f'<div class="dm-tags">{tags}{syn_badge}{sim_badge}</div></div></article>')
 
     sections = ""
     for sec, n in counts.most_common():
@@ -449,13 +482,24 @@ def _daily_view(rows: list[dict], chat: dict | None = None) -> str:
             f'<span class="c" data-count>{n}</span></div>'
             f'<div class="dm-drop" data-sec="{_e(sec)}">{cards}</div></section>')
 
+    # similar-articles payload, keyed by article id (rendered in a popup on demand)
+    sim_map = {r.get("id", ""): r.get("similar") for r in rows
+               if r.get("id") and r.get("similar")}
     cfg = _json.dumps({"session_id": (chat or {}).get("session_id", ""),
                        "token": (chat or {}).get("token", ""),
-                       "api_base": (chat or {}).get("api_base", "")})
+                       "api_base": (chat or {}).get("api_base", ""),
+                       "sim": sim_map}).replace("<", "\\u003c")
+    modal = ('<div class="dm-modal" id="dm-modal" hidden>'
+             '<div class="dm-modal-back" data-dm-close></div>'
+             '<div class="dm-modal-card" role="dialog" aria-modal="true">'
+             '<div class="dm-modal-head"><h4 id="dm-modal-title"></h4>'
+             '<button class="dm-modal-x" data-dm-close aria-label="close">&times;</button></div>'
+             '<div class="dm-modal-body" id="dm-modal-body"></div></div></div>')
     return (
         _DAILY_CSS
         + f'<div class="dm-wrap"><aside class="dm-side">{side}</aside>'
         + f'<main class="dm-main" id="dm-main">{sections}</main></div>'
+        + modal
         + f"<script>{_DAILY_JS}\n__dailyInit({cfg});</script>")
 
 
@@ -519,6 +563,49 @@ function __dailyInit(CFG){
       var n=s.querySelectorAll('.dm-art').length; var c=s.querySelector('[data-count]');
       if(c)c.textContent=n;});
   }
+  // ---- syndication / similar-articles popup ----
+  var modal=document.getElementById('dm-modal');
+  function esc(s){return (s||'').replace(/[&<>"]/g,function(c){
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+  function httpOk(u){return /^https?:\/\//i.test(u||'');}
+  function dom(u){try{return new URL(u).hostname.replace(/^www\./,'');}catch(e){return (u||'');}}
+  function fav(u){var d=dom(u);return d?'<img src="https://www.google.com/s2/favicons?domain='
+    +encodeURIComponent(d)+'&sz=32" width="16" height="16" alt="" loading="lazy">':'';}
+  function sentLabel(s){s=(s||'NEU').toUpperCase();
+    return s==='POS'?'Positive':(s==='NEG'?'Negative':'Neutral');}
+  function openModal(title,html){
+    document.getElementById('dm-modal-title').textContent=title;
+    document.getElementById('dm-modal-body').innerHTML=html||'<div class="dm-empty">Nothing to show.</div>';
+    modal.hidden=false;}
+  function closeModal(){if(modal)modal.hidden=true;}
+  function synHtml(urls){
+    var rows=urls.filter(httpOk).map(function(u){
+      return '<div class="dm-synrow">'+fav(u)+'<a href="'+esc(u)+'" target="_blank" '
+        +'rel="noopener noreferrer">'+esc(dom(u))+'</a><span class="d">open ↗</span></div>';});
+    return rows.join('')||'<div class="dm-empty">No valid links.</div>';}
+  function simHtml(items){
+    if(!items.length)return '<div class="dm-empty">No similar articles.</div>';
+    return items.map(function(it){
+      var why=(it.reason||''),whyCls='dm-why'+(why.toLowerCase()==='crisis'?' crisis':'');
+      var t=httpOk(it.url)
+        ?'<a class="t" href="'+esc(it.url)+'" target="_blank" rel="noopener noreferrer">'
+          +esc(it.title||'(untitled)')+'</a>'
+        :'<span class="t">'+esc(it.title||'(untitled)')+'</span>';
+      var m='<span class="'+whyCls+'">'+esc(why)+'</span>';
+      if(it.publisher)m+='<span>'+fav(it.url)+' '+esc(it.publisher)+'</span>';
+      m+='<span>'+sentLabel(it.sentiment)+'</span>';
+      if(it.date)m+='<span>'+esc(it.date)+'</span>';
+      return '<div class="dm-simcard">'+t+'<div class="m">'+m+'</div></div>';}).join('');}
+  main.addEventListener('click',function(e){
+    var syn=e.target.closest('.dm-syn');
+    if(syn){var urls=(syn.getAttribute('data-urls')||'').split('|').filter(Boolean);
+      openModal(urls.length+' syndicated '+(urls.length===1?'copy':'copies'),synHtml(urls));return;}
+    var sim=e.target.closest('.dm-sim');
+    if(sim){var items=(CFG.sim||{})[sim.getAttribute('data-id')]||[];
+      openModal(items.length+' similar '+(items.length===1?'article':'articles'),simHtml(items));}
+  });
+  document.addEventListener('click',function(e){if(e.target.closest('[data-dm-close]'))closeModal();});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')closeModal();});
 }
 """
 

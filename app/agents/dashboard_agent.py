@@ -268,8 +268,68 @@ async def _daily_rows(session_id: str, limit: int = 400) -> list[dict]:
             for a in payload.get("articles", [])
             if a.get("is_approved_for_monitoring") and a.get("is_relevant", True) is not False
         ]
+        _attach_similar(rows)
         return rows[:limit]
     return []
+
+
+_CRISIS_RE = None
+
+
+def _attach_similar(rows: list[dict]) -> None:
+    """Cluster each row against the others and attach a `similar` list (why + link) so the
+    Daily Monitoring card can show a 'similar articles' popup. Deterministic + explainable —
+    reasons are Crisis / Same story / Same topic / Shared emotion, strongest first — so the
+    read is grounded, not an opaque embedding score."""
+    import re
+
+    global _CRISIS_RE
+    if _CRISIS_RE is None:
+        _CRISIS_RE = re.compile(r"crisis|recall|lawsuit|litig|probe|fine|breach|scandal|"
+                                r"layoff|fraud|outage|death|injur|contaminat", re.I)
+
+    def _toks(s: str) -> set[str]:
+        return set(re.findall(r"[a-z0-9]{4,}", (s or "").lower()))
+
+    def _set(joined: str) -> set[str]:
+        return {x.strip().lower() for x in (joined or "").split(";") if x.strip()}
+
+    prep = []
+    for r in rows:
+        prep.append({"toks": _toks(r.get("title", "")),
+                     "emo": _set(r.get("emotions", "")),
+                     "sig": _set(r.get("signals", "")),
+                     "crisis": bool(r.get("priority")) or bool(_CRISIS_RE.search(
+                         f'{r.get("signals","")} {r.get("theme","")} {r.get("title","")}'))})
+
+    for i, r in enumerate(rows):
+        a = prep[i]
+        sims: list[tuple[int, str, dict]] = []
+        for j, o in enumerate(rows):
+            if i == j or (r.get("url") and r["url"] == o.get("url")):
+                continue
+            b = prep[j]
+            jac = (len(a["toks"] & b["toks"]) / len(a["toks"] | b["toks"])
+                   if a["toks"] and b["toks"] else 0.0)
+            same_topic = bool(r.get("theme")) and r.get("theme") == o.get("theme")
+            shared_emo = bool(a["emo"] & b["emo"])
+            crisis = a["crisis"] and b["crisis"] and (same_topic or a["sig"] & b["sig"])
+            if crisis:
+                score, why = 4, "Crisis"
+            elif jac >= 0.55:
+                score, why = 3, "Same story"
+            elif same_topic:
+                score, why = 2, "Same topic"
+            elif shared_emo:
+                score, why = 1, "Shared emotion"
+            else:
+                continue
+            sims.append((score, why, {
+                "title": o.get("title", ""), "publisher": o.get("publisher", ""),
+                "url": o.get("url", ""), "date": o.get("date", ""),
+                "sentiment": o.get("sentiment", "NEU"), "reason": why}))
+        sims.sort(key=lambda t: t[0], reverse=True)
+        r["similar"] = [s[2] for s in sims[:8]]
 
 
 def _plain(html_or_text: str) -> str:
