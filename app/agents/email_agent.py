@@ -208,6 +208,42 @@ async def _provision_project(brand: str, sender: str) -> Project:
     return fresh
 
 
+_QUOTE_RE = re.compile(
+    r"(?i)(from:\s|sent:\s|-----\s*original message|on\s.{0,80}?\bwrote:|________{3,})")
+
+
+def _new_reply_only(text: str) -> str:
+    """The user's NEW reply text, dropping the quoted history below it. The quoted original
+    gate email contains its own 'change: …' example and the RT- token, which would otherwise
+    mis-classify the reply or leak into intent detection — so classification must see only
+    what the user actually typed."""
+    t = _clean_text(text or "")
+    m = _QUOTE_RE.search(t)
+    return (t[: m.start()] if m else t).strip()
+
+
+async def _full_email_body(adapter, message_id: str) -> str:
+    """De-HTML'd full body of an email via mail_read — the preview from mail_list omits both
+    the user's text (behind the security banner) and the quoted RT- reference token."""
+    if not (message_id and hasattr(adapter, "_call")):
+        return ""
+    with contextlib.suppress(Exception):
+        import json as _json
+
+        out = await adapter._call("mail_read", {"messageId": message_id})
+        raw = out.get("text", "") or ""
+        content = raw
+        with contextlib.suppress(Exception):
+            data = _json.loads(raw)
+            body = data.get("body")
+            content = (body.get("content") if isinstance(body, dict) else None) \
+                or data.get("bodyPreview") or raw
+        text = re.sub(r"<[^>]+>", " ", content)          # strip tags
+        text = re.sub(r"&[a-z]+;", " ", text)            # strip entities
+        return re.sub(r"\s+", " ", text).strip()
+    return ""
+
+
 async def _pending_gate_run(project_id: str, task_id: str | None = None) -> Run | None:
     async with get_sessionmaker()() as db:
         q = select(Run).where(
@@ -481,8 +517,16 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
 
     tid = extract_task_id(inbound.subject) or extract_task_id(inbound.text)
     run = await _pending_gate_run(project_id, task_id=tid)
-    intent = await _classify(inbound, has_pending_gate=run is not None)
     adapter = await _adapter_for(inbound.channel)
+    # For a pending-gate reply, the mailbox scan's short preview lacks the user's actual text
+    # (behind the security banner) and the RT- token (in the quoted original). Fetch the full
+    # body: classify on the NEW reply only, verify the token against the WHOLE body.
+    gate_full = ""
+    if run is not None and inbound.channel == "email" and inbound.raw_id:
+        gate_full = await _full_email_body(adapter, inbound.raw_id)
+        if gate_full:
+            inbound.text = _new_reply_only(gate_full)
+    intent = await _classify(inbound, has_pending_gate=run is not None)
 
     if intent.kind == "start_run" and run is None:
         result = await _start_run(project, intent.brand, inbound)
@@ -502,8 +546,9 @@ async def handle_inbound(inbound: ChannelInbound) -> dict:
         from app.orchestration.run_manager import get_run_manager
         from app.security.auth import token_in_text
 
-        # A gate reply must carry the per-run token from the original notification.
-        thread_text = f"{inbound.subject}\n{inbound.text}"
+        # A gate reply must carry the per-run token from the original notification — check it
+        # against the FULL body (the token lives in the quoted original, not the preview).
+        thread_text = f"{inbound.subject}\n{gate_full or inbound.text}"
         if not token_in_text(str(run.id), thread_text):
             log.warning("inbound.missing_resume_token", run_id=str(run.id),
                         sender=inbound.sender)
