@@ -65,13 +65,15 @@ async def lifespan(app: FastAPI):
         from app.scheduler.loop import scheduler_loop
 
         await setup_checkpointer_tables()
-        recovered = await get_run_manager().recovery_sweep()
+        rm = get_run_manager()
+        recovered = await rm.recovery_sweep()   # auto-resume runs a crash/restart cut off
         if recovered:
             log.info("app.recovered_runs", count=recovered)
         register_channel_adapters()
         background.append(asyncio.create_task(scheduler_loop()))
         background.append(asyncio.create_task(inbound_loop()))
         background.append(asyncio.create_task(gate_escalation_loop()))
+        background.append(asyncio.create_task(rm.recovery_loop()))  # in-session self-recovery
     except Exception as exc:
         # infra warm-up problems surface via /health, not a crashed process
         log.error("app.startup_degraded", error=str(exc))

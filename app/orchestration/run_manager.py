@@ -222,8 +222,12 @@ class RunManager:
 
     # ── recovery & queries ───────────────────────────────────────────────────
 
-    async def recovery_sweep(self) -> int:
-        """Mark crashed 'running' rows (stale heartbeat, no live task) interrupted."""
+    async def recovery_sweep(self, auto_resume: bool = True) -> int:
+        """Self-recover crashed runs: a 'running' row with no live task and a stale heartbeat
+        was cut off (crash / restart / lost worker). Mark it interrupted and — unless told
+        otherwise — RESUME it from its last checkpoint so the pipeline continues on its own,
+        no human needed. Runs parked at a human gate ('awaiting_human') are left untouched:
+        they are supposed to wait for the reply. Safe to call repeatedly."""
         cutoff = datetime.now(UTC) - timedelta(seconds=STALE_AFTER_SECONDS)
         async with get_sessionmaker()() as db, db.begin():
             rows = (
@@ -236,11 +240,28 @@ class RunManager:
             ]
             for r in stale:
                 r.status = "interrupted"
-        for r in stale:
-            await get_event_bus().emit(r.id, "run_recovered_as_interrupted")
+        ids = [str(r.id) for r in stale]
+        for rid in ids:
+            await get_event_bus().emit(rid, "run_recovered_as_interrupted")
+        resumed = 0
+        if auto_resume:
+            for rid in ids:
+                with contextlib.suppress(Exception):
+                    await self.resume(rid)          # continue from the last checkpoint
+                    resumed += 1
         if stale:
-            log.info("run.recovery_sweep", recovered=len(stale))
+            log.info("run.recovery_sweep", recovered=len(stale), resumed=resumed)
         return len(stale)
+
+    async def recovery_loop(self, every_seconds: int = 180) -> None:
+        """Background self-healing: periodically resume any run that crashed mid-flight, so
+        recovery isn't only at startup — the agent heals in-session too."""
+        import asyncio as _asyncio
+
+        while True:
+            with contextlib.suppress(Exception):
+                await self.recovery_sweep()
+            await _asyncio.sleep(every_seconds)
 
     async def _session_busy(self, session_id: str) -> bool:
         async with get_sessionmaker()() as db:
