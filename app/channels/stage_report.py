@@ -150,34 +150,46 @@ def _logo_row(brands) -> str:
 
 
 # InfoVision Intelligence signature — hardcoded brand footer on every agent email.
-# Logo via the favicon service (email-safe remote image); swap _SIG_LOGO for a hosted
-# asset URL (or app/static path served over public_api_base) to use the exact brand image.
-_SIG_LOGO = "https://www.google.com/s2/favicons?domain=infovision.com&sz=128"
+# When SIGNATURE_LOGO_URL is set (a public raster the recipient's client can load) the exact
+# brand image is shown; otherwise an email-safe two-tone wordmark that matches the logo —
+# "InfoVision" in grey, "Intelligence" in brand purple (gradient text isn't reliable in
+# Outlook, so a solid purple stands in). The favicon mark sits alongside the wordmark.
+_SIG_MARK = "https://www.google.com/s2/favicons?domain=infovision.com&sz=128"
 _SIG_SITE = "https://www.infovision.com"
+_II_GREY = "#6b6b70"
+_II_PURPLE = "#7c3aed"
 
 
 def _signature_html() -> str:
     import contextlib
 
-    logo = _SIG_LOGO
+    logo = ""
     with contextlib.suppress(Exception):
         from app.config.settings import get_settings
 
-        logo = get_settings().signature_logo_url or _SIG_LOGO
+        logo = get_settings().signature_logo_url or ""
+    if logo:                                    # exact hosted brand image
+        brand = (f'<img src="{_esc(logo)}" alt="InfoVision Intelligence" height="34" '
+                 f'style="display:block;max-height:42px">')
+    else:                                        # email-safe wordmark that matches the logo
+        brand = (
+            f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+            f'<td valign="middle" style="padding-right:9px">'
+            f'<img src="{_SIG_MARK}" width="30" height="30" alt="" '
+            f'style="border-radius:7px;display:block"></td>'
+            f'<td valign="middle" style="font-family:{_BODY_FONT};font-size:19px;'
+            f'font-weight:600;letter-spacing:-.2px"><span style="color:{_II_GREY}">'
+            f'InfoVision</span> <span style="color:{_II_PURPLE}">Intelligence</span></td>'
+            f'</tr></table>')
     return (
         f'<table role="presentation" cellpadding="0" cellspacing="0" '
         f'style="margin-top:18px;border-top:1px solid {_BORDER};padding-top:14px"><tr>'
-        f'<td valign="middle" style="padding-right:12px">'
-        f'<img src="{_esc(logo)}" alt="InfoVision" height="38" '
-        f'style="border-radius:8px;display:block;max-height:44px"></td>'
-        f'<td valign="middle">'
-        f'<div style="font-family:{_SERIF};font-size:15px;color:{_INK};line-height:1.2">'
-        f'InfoVision Intelligence</div>'
-        f'<div style="font-size:12px;font-weight:700;color:{_ACCENT};margin:2px 0">'
+        f'<td>{brand}'
+        f'<div style="font-size:12px;font-weight:700;color:{_ACCENT};margin:7px 0 0">'
         f'#AccelerateDigital</div>'
-        f'<div style="font-size:11px;color:{_MUTED}">DIGI7 &middot; INVISINET &middot; '
-        f'VCOLLAB &middot; <a href="{_SIG_SITE}" style="color:{_MUTED}">www.infovision.com</a>'
-        f'</div></td></tr></table>'
+        f'<div style="font-size:11px;color:{_MUTED};margin-top:2px">DIGI7 &middot; INVISINET '
+        f'&middot; VCOLLAB &middot; <a href="{_SIG_SITE}" style="color:{_MUTED}">'
+        f'www.infovision.com</a></div></td></tr></table>'
     )
 
 
