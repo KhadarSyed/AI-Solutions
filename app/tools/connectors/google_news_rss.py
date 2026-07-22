@@ -19,7 +19,18 @@ from app.tools.connectors.base import (
 
 log = get_logger(__name__)
 
-_FEED = "https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+_FEED = "https://news.google.com/rss/search?q={q}&hl={hl}&gl={gl}&ceid={ceid}"
+
+
+def _edition(country: str | None, language: str | None) -> tuple[str, str, str]:
+    """Map a run's country/language to the Google News RSS edition triple (hl, gl, ceid) so
+    a country-scoped run hits that country's edition server-side, not the hardcoded US one.
+    country=all/None → worldwide English (US edition, Google's global-English default)."""
+    lang = (language or "en").split("-")[0].lower()
+    if country and country.lower() not in ("all", ""):
+        gl = country.upper()[:2]
+        return f"{lang}-{gl}", gl, f"{gl}:{lang}"
+    return f"{lang}-US", "US", f"US:{lang}"
 
 
 def _entry_to_article(entry, query: str, group: str) -> RawArticle:
@@ -64,7 +75,7 @@ def parse_feed(xml_text: str, query: str, group: str, max_results: int) -> list[
 
 class GoogleNewsRSSConnector(Connector):
     name = "google_news_rss"
-    capabilities = Capabilities(date_range=True, language=True, max_results=True)
+    capabilities = Capabilities(date_range=True, language=True, country=True, max_results=True)
 
     def enabled(self) -> bool:
         return True  # free — always on
@@ -72,9 +83,11 @@ class GoogleNewsRSSConnector(Connector):
     async def search(self, queries: list[str], filters: SearchFilters) -> ConnectorResult:
         result = ConnectorResult()
 
+        hl, gl, ceid = _edition(filters.country, filters.language)
+
         async def one(query: str) -> None:
             q = quote_plus(f"{query} when:{filters.days_back}d")
-            url = _FEED.format(q=q)
+            url = _FEED.format(q=q, hl=hl, gl=gl, ceid=ceid)
             try:
                 async with httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
                     resp = await client.get(url)
