@@ -108,6 +108,17 @@ def create_app() -> FastAPI:
     app.include_router(ws_runs_router)
     app.include_router(ws_qb_router)
     app.include_router(ws_agent_router)
+    # Serve app/static publicly (e.g. /static/brand/<logo>.png) so the email signature and
+    # dashboards can reference a stable, public raster asset by URL.
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        from pathlib import Path
+
+        from fastapi.staticfiles import StaticFiles
+
+        static_dir = Path(__file__).resolve().parent / "static"
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     return app
 
 
