@@ -158,10 +158,18 @@ async def notify_agent(state: PipelineState, agent: str, phase: str, message: st
         return
     icon = _AGENT_ICON.get(agent, "•")
     cc = await _task_cc(state)
+    text = f"{icon} {agent} Agent {phase} — {message}"
+    html = ""
+    with contextlib.suppress(Exception):
+        from app.channels import stage_report
+
+        html = stage_report.status_html(
+            state.get("task_id") or (state.get("origin_address") or {}).get("task_id", ""),
+            state.get("brand", "Monitoring"), agent, phase, message, icon=icon)
     with contextlib.suppress(Exception):
         await _send_threaded(state, adapter,
                              OutboundMessage(subject=_task_subject(state), cc=cc,
-                                             text=f"{icon} {agent} Agent {phase} — {message}"))
+                                             text=text, html=html))
 
 
 async def _deliver(state: PipelineState, event: str, message: str,

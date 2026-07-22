@@ -198,6 +198,31 @@ def _shell(task_id: str, brand: str, active_step: int, phase: str, subtitle: str
     )
 
 
+def status_html(task_id, brand, agent, phase, message, *, icon: str = "") -> str:
+    """A small branded card for an agent status update (started/finished), so these short
+    in-thread notes match the styled stage emails instead of arriving as plain text."""
+    tag = f"[{task_id}] " if task_id else ""
+    dot = _POS if phase == "finished" else _ACCENT
+    return (
+        f"{_preheader(f'{agent} {phase} — {message[:80]}')}"
+        f'<div style="background:{_BG};padding:18px 14px;font-family:{_BODY_FONT}">'
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
+        f'<td align="center"><table role="presentation" width="640" cellpadding="0" '
+        f'cellspacing="0" style="max-width:640px;width:100%"><tr><td>'
+        f'<div style="font-size:11px;text-transform:uppercase;letter-spacing:.12em;'
+        f'color:{_MUTED}">{_esc(tag)}{_esc(brand)} Monitoring</div>'
+        f'<div style="background:{_CARD};border:1px solid {_BORDER};border-left:3px solid '
+        f'{dot};border-radius:12px;padding:14px 16px;margin-top:10px">'
+        f'<div style="font-family:{_SERIF};font-size:15px;color:{_INK};margin:0 0 4px">'
+        f'{_esc(icon)} {_esc(agent)} Agent — {_esc(phase)}</div>'
+        f'<div style="font-size:13px;color:{_MUTED};line-height:1.55">{_esc(message)}</div>'
+        f'</div>'
+        f'<div style="color:#a7a19a;font-size:11px;margin-top:12px">PR Intelligence Agent · '
+        f'replies stay in this thread.</div>'
+        f'</td></tr></table></td></tr></table></div>'
+    )
+
+
 def plan_html(task_id, brand, stats, *, brands_logos, duration, intent, goal,
               boolean_queries) -> str:
     q_rows = [[q] for q in boolean_queries[:12]]
