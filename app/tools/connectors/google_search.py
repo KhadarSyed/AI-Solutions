@@ -26,7 +26,8 @@ from app.tools.connectors.base import (
 
 log = get_logger(__name__)
 
-_SKIP_HOSTS = ("google.", "youtube.com", "webcache.googleusercontent")
+_SKIP_HOSTS = ("google.", "gstatic.", "googleapis.", "googleusercontent", "ggpht.",
+               "gvt1.", "gvt2.", "youtube.com", "schema.org", "w3.org")
 # a result link wrapping an <h3> title — Google's stable-ish SERP shape
 _RESULT_RE = re.compile(r'<a href="(/url\?[^"]+|https?://[^"]+)"[^>]*>(?:(?!</a>).)*?<h3[^>]*>(.*?)</h3>',
                         re.I | re.S)
@@ -67,8 +68,10 @@ def _parse_serp(html: str, query: str, group: str = "") -> list[RawArticle]:
         url = _real_url(str(href).strip())
         host = urlparse(url).netloc.removeprefix("www.")
         title = re.sub(r"\s+", " ", _TAG_RE.sub("", str(title))).strip()
-        if (not url.startswith("http") or not title or url in seen
-                or any(s in host for s in _SKIP_HOSTS)):
+        # a real headline has spaces and length; reject asset refs / MIME types / bare tokens
+        if (not url.startswith("http") or url in seen or any(s in host for s in _SKIP_HOSTS)
+                or len(title) < 12 or " " not in title
+                or re.fullmatch(r"[\w/.+-]+", title)):
             continue
         seen.add(url)
         out.append(RawArticle(

@@ -59,13 +59,17 @@ async def navigate_and_read(url: str, timeout_note: str = "") -> str:
                 f"browser-mcp exposes no navigation tool (saw: {[t.name for t in tools][:10]})"
             )
 
-        await session.call_tool(nav, {"url": url})
-        if reader is None:
-            return ""
-        result = await session.call_tool(reader, {})
-        chunks = []
-        for item in result.content:
-            text = getattr(item, "text", None)
-            if text:
-                chunks.append(text)
+        chunks: list[str] = []
+        # @playwright/mcp's navigate returns the page's accessibility snapshot in its result —
+        # capture it AND a follow-up snapshot/read so callers get the full page, not a stub.
+        nav_res = await session.call_tool(nav, {"url": url})
+        for item in getattr(nav_res, "content", []) or []:
+            if getattr(item, "text", None):
+                chunks.append(item.text)
+        if reader is not None:
+            with __import__("contextlib").suppress(Exception):
+                rd = await session.call_tool(reader, {})
+                for item in getattr(rd, "content", []) or []:
+                    if getattr(item, "text", None):
+                        chunks.append(item.text)
         return "\n".join(chunks)
